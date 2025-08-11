@@ -121,3 +121,31 @@ environment:
 - Новые версии CRL
 - Неопубликованные CRL
 - Недельная статистика отозванных сертификатов
+
+## Пример docker-compose
+```yaml
+  crl-monitor:
+    build: 
+      context: ./crlchecker/
+    container_name: crl-monitor
+    environment:
+      - TZ=Europe/Moscow
+      - TELEGRAM_BOT_TOKEN=
+      - TELEGRAM_CHAT_ID=-
+      - FNS_ONLY=false
+        # Уведомления TSL
+      - NOTIFY_NEW_CAS=true
+      - NOTIFY_DATE_CHANGES=true
+      - NOTIFY_CRL_CHANGES=true
+      - NOTIFY_STATUS_CHANGES=true
+        
+        # Уведомления CRL
+      - NOTIFY_EXPIRING_CRL=true
+      - NOTIFY_EXPIRED_CRL=false
+      - NOTIFY_NEW_CRL=true
+      - NOTIFY_MISSED_CRL=true
+      - NOTIFY_WEEKLY_STATS=false
+    volumes:
+      - ./crlchecker/data:/app/data
+    restart: unless-stopped
+```
