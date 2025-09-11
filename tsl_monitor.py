@@ -11,6 +11,8 @@ import time
 from collections import defaultdict
 import html # Для экранирования HTML
 from config import *
+from prometheus_client import Counter, Gauge
+from metrics_server import MetricsRegistry
 from telegram_notifier import TelegramNotifier
 
 # Настройка логирования
@@ -27,12 +29,17 @@ logger = logging.getLogger(__name__)
 TSL_URL = "https://e-trust.gosuslugi.ru/app/scc/portal/api/v1/portal/ca/getxml"
 TSL_STATE_FILE = os.path.join(DATA_DIR, 'tsl_state.json')
 TSL_CRL_URLS_FILE = os.path.join(DATA_DIR, 'crl_urls_from_tsl.txt') # Новый файл
-TSL_CHECK_INTERVAL_HOURS = 24 # Проверка раз в 24 часа
+# Используем значение из config.py: TSL_CHECK_INTERVAL_HOURS
 
 class TSLMonitor:
     def __init__(self):
         self.notifier = TelegramNotifier()
         self.state = self.load_state()
+        # Метрики
+        self.metric_tsl_checks_total = Counter('tsl_checks_total', 'Total TSL check runs', registry=MetricsRegistry.registry)
+        self.metric_tsl_fetch_status = Counter('tsl_fetch_total', 'TSL fetch attempts', ['result'], registry=MetricsRegistry.registry)
+        self.metric_active_cas = Gauge('tsl_active_cas', 'Active CAs parsed from TSL', registry=MetricsRegistry.registry)
+        self.metric_crl_urls = Gauge('tsl_crl_urls', 'Unique CRL URLs extracted from TSL', registry=MetricsRegistry.registry)
 
     def load_state(self):
         """Загрузка состояния из файла"""
@@ -66,19 +73,28 @@ class TSLMonitor:
             logger.error(f"Ошибка сохранения URL CRL: {e}")
 
     def download_tsl(self):
-        """Скачивание TSL.xml"""
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            logger.info("Начало загрузки TSL.xml...")
-            response = requests.get(TSL_URL, timeout=60, headers=headers)
-            response.raise_for_status()
-            logger.info("TSL.xml успешно загружен")
-            return response.content
-        except Exception as e:
-            logger.error(f"Ошибка загрузки TSL.xml: {e}")
-            return None
+        """Скачивание TSL.xml с ретраями и бэкоффом"""
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        backoff = 2
+        tries = 3
+        for attempt in range(1, tries + 1):
+            try:
+                logger.info("Начало загрузки TSL.xml...")
+                response = requests.get(TSL_URL, timeout=60, headers=headers, verify=VERIFY_TLS)
+                response.raise_for_status()
+                logger.info("TSL.xml успешно загружен")
+                self.metric_tsl_fetch_status.labels(result='success').inc()
+                return response.content
+            except Exception as e:
+                logger.error(f"Ошибка загрузки TSL.xml (попытка {attempt}/{tries}): {e}")
+                self.metric_tsl_fetch_status.labels(result='error').inc()
+                if attempt < tries:
+                    import time
+                    time.sleep(backoff)
+                    backoff *= 2
+        return None
 
     def _parse_datetime(self, date_str):
         """Вспомогательная функция для парсинга даты из TSL."""
@@ -241,6 +257,7 @@ class TSLMonitor:
         """Основная проверка TSL"""
         try:
             logger.info("Начало проверки TSL...")
+            self.metric_tsl_checks_total.inc()
             xml_content = self.download_tsl()
             if not xml_content:
                 return
@@ -248,6 +265,8 @@ class TSLMonitor:
             if not current_state:
                 logger.warning("Не удалось извлечь данные об УЦ из TSL")
                 return
+            self.metric_active_cas.set(len(current_state))
+            self.metric_crl_urls.set(len(all_crl_urls))
             # Сохраняем все найденные URL CRL
             self.save_crl_urls(all_crl_urls)
             changes = self.compare_states(self.state, current_state)

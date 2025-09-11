@@ -1,0 +1,29 @@
+services:
+  crlchecker:
+    build:
+      context: .
+    container_name: crlchecker
+    environment:
+      - TZ=Europe/Moscow
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - FNS_ONLY=false
+      - VERIFY_TLS=false
+      - METRICS_PORT=8000
+      # Уведомления TSL
+      - NOTIFY_NEW_CAS=true
+      - NOTIFY_DATE_CHANGES=true
+      - NOTIFY_CRL_CHANGES=true
+      - NOTIFY_STATUS_CHANGES=true
+      # Уведомления CRL
+      - NOTIFY_EXPIRING_CRL=true
+      - NOTIFY_EXPIRED_CRL=false
+      - NOTIFY_NEW_CRL=true
+      - NOTIFY_MISSED_CRL=true
+      - NOTIFY_WEEKLY_STATS=false
+    volumes:
+      - ./data:/app/data
+    expose:
+      - "8000" # доступно только внутри docker-сети (для дашборда/прометея)
+    restart: unless-stopped
+

@@ -51,6 +51,9 @@ MOSCOW_TZ = timezone(timedelta(hours=3))
 # --- Конфигурация для TSL Monitor ---
 TSL_CHECK_INTERVAL_HOURS = 3
 
+# --- Метрики и здоровье ---
+METRICS_PORT = int(os.getenv('METRICS_PORT', '8000'))
+
 # --- Конфигурация для CRL Monitor ---
 # Режим работы: только ФНС (true) или все УЦ из TSL (false)
 # Значение берется из переменной окружения FNS_ONLY, по умолчанию False
@@ -71,3 +74,7 @@ TSL_CRL_URLS_FILE = os.path.join(DATA_DIR, 'crl_urls_from_tsl.txt')
 
 # Таймаут для проверки доступности (в секундах)
 AVAILABILITY_TIMEOUT = 10
+
+# Проверка TLS-сертификатов при HTTP-запросах (GET/HEAD)
+# Можно отключить в средах с нестандартными цепочками: VERIFY_TLS=false
+VERIFY_TLS = os.getenv('VERIFY_TLS', 'true').lower() == 'true'

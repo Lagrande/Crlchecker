@@ -10,6 +10,8 @@ from collections import defaultdict
 from config import *
 from crl_parser import CRLParser
 from telegram_notifier import TelegramNotifier
+from prometheus_client import Counter, Gauge
+from metrics_server import MetricsRegistry
 
 # Настройка логирования
 logging.basicConfig(
@@ -41,6 +43,13 @@ class CRLMonitor:
         self.notifier = TelegramNotifier()
         self.state = self.load_state()
         self.weekly_stats = self.load_weekly_stats()
+        # Для отслеживания уже залогированных пустых CRL
+        self.logged_empty_crls = self.load_logged_empty_crls()
+        # Метрики
+        self.metric_checks_total = Counter('crl_checks_total', 'Total CRL check runs', registry=MetricsRegistry.registry)
+        self.metric_processed_total = Counter('crl_processed_total', 'Processed CRL files', ['result'], registry=MetricsRegistry.registry)
+        self.metric_unique_urls = Gauge('crl_unique_urls', 'Unique CRL URLs per run', registry=MetricsRegistry.registry)
+        self.metric_skipped_empty = Counter('crl_skipped_empty', 'Skipped empty CRLs with long validity', registry=MetricsRegistry.registry)
 
     def load_state(self):
         """Загрузка состояния из файла"""
@@ -113,6 +122,22 @@ class CRLMonitor:
                 json.dump(self.weekly_stats, f, ensure_ascii=False, indent=2, default=str)
         except Exception as e:
             logger.error(f"Ошибка сохранения статистики: {e}")
+
+    def load_logged_empty_crls(self):
+        """Загружает список уже залогированных пустых CRL"""
+        try:
+            with open(os.path.join(DATA_DIR, 'logged_empty_crls.json'), 'r') as f:
+                return set(json.load(f))
+        except (FileNotFoundError, json.JSONDecodeError):
+            return set()
+
+    def save_logged_empty_crls(self):
+        """Сохраняет список уже залогированных пустых CRL"""
+        try:
+            with open(os.path.join(DATA_DIR, 'logged_empty_crls.json'), 'w') as f:
+                json.dump(list(self.logged_empty_crls), f)
+        except Exception as e:
+            logger.error(f"Ошибка сохранения logged_empty_crls: {e}")
 
     def get_all_crl_urls(self):
         """Получение всех CRL URL: из CDP_SOURCES, KNOWN_CRL_PATHS и из файла TSL_CRL_URLS_FILE"""
@@ -194,6 +219,7 @@ class CRLMonitor:
         """Основная проверка (высокоуровневая логика)."""
         try:
             logger.info("Начало проверки CRL...")
+            self.metric_checks_total.inc()
             crl_urls = self.get_all_crl_urls()
 
             # Группировка URL по имени файла
@@ -203,6 +229,7 @@ class CRLMonitor:
                 url_groups[filename].append(url)
 
             logger.info(f"Найдено {len(url_groups)} уникальных CRL для проверки.")
+            self.metric_unique_urls.set(len(url_groups))
 
             # Обработка каждой группы URL
             for filename, urls_in_group in url_groups.items():
@@ -240,46 +267,84 @@ class CRLMonitor:
                     last_error = f"Не удалось распарсить CRL '{filename}' с {url}"
                     continue
 
-                # --- ИСПРАВЛЕНИЕ НАЧИНАЕТСЯ ЗДЕСЬ ---
-
                 # 3. Преобразование результата в стандартизированный словарь (crl_info)
                 crl_info = None
                 if isinstance(parsed_object, dict):
-                    # Если parse_crl вернул словарь (от OpenSSL), используем его напрямую
                     crl_info = parsed_object
                     logger.info(f"Информация о CRL '{filename}' получена через резервный парсинг OpenSSL.")
                 else:
-                    # Если parse_crl вернул объект cryptography, преобразуем его в словарь
-                    # с помощью метода get_crl_info
                     crl_info = self.parser.get_crl_info(parsed_object)
                 
                 if not crl_info:
                     last_error = f"Не удалось извлечь информацию из CRL '{filename}'"
                     continue
                 
-                # --- ИСПРАВЛЕНИЕ ЗАКАНЧИВАЕТСЯ ЗДЕСЬ ---
-
-                # 4. Проверка на Delta CRL (теперь crl_info - это гарантированно словарь)
+                # 4. Проверка на пустой CRL с длительным сроком действия
+                if self.should_skip_empty_crl(crl_info, filename):
+                    self.metric_skipped_empty.inc()
+                    crl_processed = True  # Помечаем как обработанный, чтобы не пробовать другие URL
+                    break
+                
+                # 5. Проверка на Delta CRL
                 if crl_info.get('is_delta', False):
                     last_error = f"CRL с {url} является Delta CRL и игнорируется."
                     logger.debug(last_error)
                     continue
 
-                # 5. Обработка, обновление состояния и отправка уведомлений
+                # 6. Обработка, обновление состояния и отправка уведомлений
                 self.handle_crl_info(filename, crl_info, url)
                 
                 crl_processed = True
+                self.metric_processed_total.labels(result='success').inc()
                 logger.info(f"Успешно обработан CRL '{filename}' с {url}")
                 break # Успех, выходим из цикла по зеркалам
                 
             except Exception as e:
                 last_error = f"Ошибка обработки CRL '{filename}' с {url}: {e}"
                 logger.error(last_error, exc_info=True)
+                self.metric_processed_total.labels(result='error').inc()
                 continue
 
         if not crl_processed:
             error_msg = f"Не удалось обработать CRL '{filename}' ни с одного из {len(urls)} URL. Последняя ошибка: {last_error}"
             logger.error(error_msg)
+            self.metric_processed_total.labels(result='failed_group').inc()
+
+    def should_skip_empty_crl(self, crl_info, filename):
+        """Проверяет, нужно ли пропустить пустой CRL с длительным сроком действия"""
+        # Проверяем, что CRL пустой (нет отозванных сертификатов)
+        if crl_info.get('revoked_count', 0) > 0:
+            return False
+        
+        # Проверяем наличие даты следующего обновления
+        next_update = crl_info.get('next_update')
+        if not next_update:
+            return False
+        
+        # Нормализуем дату
+        if isinstance(next_update, str):
+            try:
+                next_update = datetime.fromisoformat(next_update)
+            except ValueError:
+                return False
+        
+        # Проверяем, что CRL действителен более 3 месяцев
+        now = datetime.now(MOSCOW_TZ)
+        three_months_later = now + timedelta(days=90)
+        
+        logger.debug(f"Проверка CRL '{filename}': next_update={next_update}, three_months_later={three_months_later}")
+        
+        if next_update > three_months_later:
+            # Логируем только один раз для каждого CRL
+            if filename not in self.logged_empty_crls:
+                logger.info(f"Пропуск пустого CRL '{filename}' с длительным сроком действия: "
+                           f"действителен до {next_update.strftime('%Y-%m-%d %H:%M:%S')} "
+                           f"(более 3 месяцев)")
+                self.logged_empty_crls.add(filename)
+                self.save_logged_empty_crls()
+            return True
+        
+        return False
 
     def handle_crl_info(self, filename, crl_info, url):
         """Обрабатывает извлеченную информацию о CRL: проверяет, обновляет состояние, отправляет уведомления."""
@@ -488,7 +553,6 @@ class CRLMonitor:
             # --- НОВАЯ ЛОГИКА ФИЛЬТРАЦИИ ---
             # Получаем URL из состояния для проверки принадлежности к ФНС
             crl_url = crl_state.get('url', '')
-            
             # Если включен режим FNS_ONLY, проверяем принадлежность CRL к ФНС
             if FNS_ONLY and crl_url:
                 # Проверяем, принадлежит ли URL доменам ФНС
@@ -497,18 +561,24 @@ class CRLMonitor:
                     logger.debug(f"Пропущена проверка неопубликованного CRL '{crl_name}' ({crl_url}) в режиме FNS_ONLY.")
                     continue
             # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
-            
             next_update_str = crl_state.get('next_update')
             # crl_url уже получен выше
-            
             if next_update_str:
                 try:
                     # Используем _parse_datetime_with_tz для парсинга времени из состояния
                     next_update_dt = self._parse_datetime_with_tz(next_update_str)
+                    # --- НОВАЯ ЛОГИКА: Проверка, не слишком ли старое ожидание ---
+                    # Определим порог: если CRL ожидался больше месяца назад, не уведомляем.
+                    one_month_ago = now_msk - timedelta(days=30)
+                    # next_update_dt - это дата ожидаемого обновления. Если она < one_month_ago,
+                    # значит CRL ожидался более месяца назад.
+                    if next_update_dt < one_month_ago:
+                        logger.debug(f"CRL '{crl_name}' ожидался более месяца назад ({next_update_dt}). Уведомление о пропущенном CRL пропущено.")
+                        continue # Пропускаем уведомление
+                    # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
                     # Вычисляем time_left внутри try
                     time_left = next_update_dt - now_msk
                     if time_left.total_seconds() < -3600: # Если прошло больше часа после ожидаемого обновления
-
                         # Проверяем, не было ли уже уведомления об этом пропуске
                         last_missed_alert = crl_state.get('last_alerts', {}).get('missed')
                         if not last_missed_alert or (now_msk - self._parse_datetime_with_tz(last_missed_alert)).total_seconds() > 86400: # 24 часа
@@ -520,7 +590,7 @@ class CRLMonitor:
                 except Exception as e:
                     logger.error(f"Ошибка обработки времени для CRL {crl_name} ({crl_url}): {e}")
             # else: next_update_str отсутствует, пропускаем проверку для этой записи
-
+            
     def send_weekly_stats(self):
         """Отправка недельной статистики"""
         if self.weekly_stats:
@@ -535,18 +605,25 @@ class CRLMonitor:
             logger.info("Начало проверки CRL...")
             crl_urls = self.get_all_crl_urls()
 
+            # Группировка URL по имени файла
             url_groups = defaultdict(list)
             for url in crl_urls:
                 filename = os.path.basename(url)
                 url_groups[filename].append(url)
+
             logger.info(f"Найдено {len(url_groups)} уникальных CRL для проверки.")
 
+            # Обработка каждой группы URL
             for filename, urls_in_group in url_groups.items():
                 self.process_crl_group(filename, urls_in_group)
 
+            # Проверка неопубликованных CRL после всех попыток загрузки
             self.check_missed_crl()
+            
+            # Сохранение состояния после полного цикла проверок
             self.save_state()
             logger.info("Проверка CRL завершена.")
+
         except Exception as e:
             logger.error(f"Критическая ошибка во время проверки CRL: {e}", exc_info=True)
 
@@ -556,6 +633,7 @@ class CRLMonitor:
         crl_processed = False
         last_error = "Неизвестная ошибка"
         last_url_tried = ""
+
         for url in urls:
             last_url_tried = url
             try:
@@ -564,75 +642,65 @@ class CRLMonitor:
                 if not crl_data:
                     last_error = f"Не удалось загрузить CRL с {url}"
                     continue
+
                 # 2. Парсинг CRL (может вернуть объект cryptography или dict)
                 parsed_object = self.parser.parse_crl(crl_data, crl_name=filename)
                 if not parsed_object:
                     last_error = f"Не удалось распарсить CRL '{filename}' с {url}"
                     continue
-                # --- ИСПРАВЛЕНИЕ НАЧИНАЕТСЯ ЗДЕСЬ ---
+
                 # 3. Преобразование результата в стандартизированный словарь (crl_info)
                 crl_info = None
                 if isinstance(parsed_object, dict):
-                    # Если parse_crl вернул словарь (от OpenSSL), используем его напрямую
                     crl_info = parsed_object
                     logger.info(f"Информация о CRL '{filename}' получена через резервный парсинг OpenSSL.")
                 else:
-                    # Если parse_crl вернул объект cryptography, преобразуем его в словарь
-                    # с помощью метода get_crl_info
                     crl_info = self.parser.get_crl_info(parsed_object)
                 
-                # --- КРИТИЧЕСКАЯ ПРОВЕРКА ТИПА ---
-                # Убедимся, что crl_info является словарем перед дальнейшим использованием
-                if not isinstance(crl_info, dict):
-                    # get_crl_info должно возвращать dict или None. Если это не так, логируем ошибку.
-                    error_type = type(crl_info).__name__
-                    # Проверим, не является ли это объектом Certificate (опечатка в логике?)
-                    # Это может произойти, если get_crl_info случайно вернул объект сертификата
-                    # вместо информации о CRL. Это и есть корень исходной ошибки.
-                    if hasattr(crl_info, '__class__') and 'Certificate' in crl_info.__class__.__name__:
-                         # Это объект Certificate, а не словарь с информацией о CRL
-                         last_error = f"Ошибка: после парсинга CRL '{filename}' получен объект Certificate вместо информации о CRL. Тип: {error_type}"
-                         logger.error(last_error + f" (Объект: {crl_info})")
-                    elif crl_info is None:
-                         last_error = f"Не удалось извлечь информацию из CRL '{filename}' (get_crl_info вернул None)."
-                         logger.error(last_error)
-                    else:
-                         # Неожиданный тип
-                         last_error = f"Ошибка: информация о CRL '{filename}' после обработки имеет неподдерживаемый тип: {error_type}"
-                         logger.error(last_error + f" (Объект: {crl_info})")
-                    continue # Переходим к следующему URL в группе
-                # --- ИСПРАВЛЕНИЕ ЗАКАНЧИВАЕТСЯ ЗДЕСЬ ---
+                if not crl_info:
+                    last_error = f"Не удалось извлечь информацию из CRL '{filename}'"
+                    continue
                 
-                # 4. Проверка на Delta CRL (теперь crl_info - это гарантированно словарь)
+                # 4. Проверка на Delta CRL
                 if crl_info.get('is_delta', False):
                     last_error = f"CRL с {url} является Delta CRL и игнорируется."
                     logger.debug(last_error)
                     continue
+
                 # 5. Обработка, обновление состояния и отправка уведомлений
                 self.handle_crl_info(filename, crl_info, url)
+                
                 crl_processed = True
                 logger.info(f"Успешно обработан CRL '{filename}' с {url}")
                 break # Успех, выходим из цикла по зеркалам
+                
             except Exception as e:
                 last_error = f"Ошибка обработки CRL '{filename}' с {url}: {e}"
                 logger.error(last_error, exc_info=True)
                 continue
+
         if not crl_processed:
             error_msg = f"Не удалось обработать CRL '{filename}' ни с одного из {len(urls)} URL. Последняя ошибка: {last_error}"
             logger.error(error_msg)
+
     def handle_crl_info(self, filename, crl_info, url):
         """Обрабатывает извлеченную информацию о CRL: проверяет, обновляет состояние, отправляет уведомления."""
-        next_update_dt = ensure_moscow_tz(crl_info.get('next_update'))
+        # Нормализация дат
+        this_update = ensure_moscow_tz(crl_info.get('this_update'))
+        next_update = ensure_moscow_tz(crl_info.get('next_update'))
         
-        self.check_crl_expiration(filename, next_update_dt, url)
+        # Проверка на истечение срока и отправка алертов
+        self.check_crl_expiration(filename, next_update, url)
+
+        # Проверка на новую версию и прирост
         self.check_for_new_version(filename, crl_info, url)
 
+        # Обновление состояния
         now_msk = datetime.now(MOSCOW_TZ)
-        this_update_dt = ensure_moscow_tz(crl_info.get('this_update'))
         self.state[filename] = {
             'last_check': now_msk.isoformat(),
-            'this_update': this_update_dt.isoformat() if this_update_dt else None,
-            'next_update': next_update_dt.isoformat() if next_update_dt else None,
+            'this_update': this_update.isoformat() if this_update else None,
+            'next_update': next_update.isoformat() if next_update else None,
             'revoked_count': crl_info['revoked_count'],
             'crl_number': crl_info.get('crl_number'),
             'last_alerts': self.state.get(filename, {}).get('last_alerts', {}),
@@ -641,63 +709,43 @@ class CRLMonitor:
 
     def check_for_new_version(self, crl_name, crl_info, url):
         """Проверяет, является ли CRL новой версией, и отправляет уведомление."""
-        # logger.debug(f"Проверка новой версии для CRL: {crl_name}")
         prev_info = self.state.get(crl_name, {})
         prev_crl_number = prev_info.get('crl_number')
         current_crl_number = crl_info.get('crl_number')
 
-        # Определяем, является ли CRL новой версией
-        is_new_version = False
-        if prev_crl_number is None and current_crl_number is not None:
-            is_new_version = True
-            # logger.debug(f"CRL {crl_name} ранее не имел номера, теперь он есть ({current_crl_number}). Считаем новой версией.")
-        elif prev_crl_number is not None and current_crl_number is not None and current_crl_number > prev_crl_number:
-            is_new_version = True
-            # logger.debug(f"CRL {crl_name} имеет больший номер ({current_crl_number} > {prev_crl_number}). Считаем новой версией.")
-        # else: номера равны или новый номер меньше/None, не считаем новой версией
-
-        # Проверяем, первый ли это раз, когда мы видим этот CRL
+        is_new_version = (
+            (prev_crl_number is None and current_crl_number is not None) or
+            (prev_crl_number is not None and current_crl_number is not None and current_crl_number > prev_crl_number)
+        )
         is_first_time = crl_name not in self.state
-        # logger.debug(f"CRL {crl_name} первый раз: {is_first_time}")
 
-        # Отправляем уведомление, если это новая версия ИЛИ первый раз
         if is_new_version or is_first_time:
-            # logger.debug(f"Обнаружена новая версия или первый раз для CRL: {crl_name}")
             previous_count = prev_info.get('revoked_count', 0)
             current_count = crl_info['revoked_count']
             increase = current_count - previous_count
 
             # Категоризация отозванных сертификатов
-            # Передаем даты в ensure_moscow_tz внутри categorize_revoked_certificates
-            # Но сначала нужно убедиться, что даты в revoked_certificates нормализованы
             for cert in crl_info.get('revoked_certificates', []):
                 if 'revocation_date' in cert and cert['revocation_date']:
-                    # Нормализуем дату отзыва перед категоризацией
                     cert['revocation_date'] = ensure_moscow_tz(cert['revocation_date'])
-
             categories = self.categorize_revoked_certificates(crl_info.get('revoked_certificates', []))
 
-            # Отправка уведомления о новом CRL
-            # Передаем this_update и next_update напрямую из crl_info, они уже нормализованы в handle_crl_info
             self.notifier.send_new_crl_info(
                 crl_name,
-                current_count, # Общее количество отозванных
-                increase,      # Прирост
-                categories,    # Категории
-                ensure_moscow_tz(crl_info['this_update']), # Дата публикации (this_update)
-                current_crl_number, # Номер CRL
-                url,           # URL
-                current_count, # Общее количество отозванных (повтор, но так в сигнатуре)
-                ensure_moscow_tz(crl_info['next_update'])  # Следующее обновление
+                current_count,
+                increase,
+                categories,
+                ensure_moscow_tz(crl_info['this_update']),
+                current_crl_number,
+                url,
+                current_count,
+                ensure_moscow_tz(crl_info['next_update'])
             )
 
             # Обновление недельной статистики
             for category, count in categories.items():
                 self.weekly_stats[category] = self.weekly_stats.get(category, 0) + count
-            # Сохраняем статистику сразу после обновления
             self.save_weekly_stats()
-        else:
-             logger.debug(f"Новая версия CRL {crl_name} не обнаружена.")
 
     def setup_schedule(self):
         """Настройка расписания"""

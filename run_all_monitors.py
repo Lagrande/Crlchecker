@@ -1,6 +1,7 @@
 # ./run_all_monitors.py
 import threading
 import time
+import logging
 from crl_monitor import CRLMonitor
 from tsl_monitor import TSLMonitor
 
@@ -13,6 +14,12 @@ def run_tsl_monitor():
     monitor.run()
 
 if __name__ == "__main__":
+    # Настройка логирования
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
     # Создаем потоки для каждого монитора
     crl_thread = threading.Thread(target=run_crl_monitor, name="CRLMonitorThread")
     tsl_thread = threading.Thread(target=run_tsl_monitor, name="TSLMonitorThread")

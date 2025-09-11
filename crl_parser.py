@@ -9,6 +9,7 @@ import subprocess
 from urllib.parse import urljoin, urlparse
 import re
 from datetime import datetime
+from config import VERIFY_TLS
 
 logger = logging.getLogger(__name__)
 
@@ -20,46 +21,45 @@ class CRLParser:
         self._last_crl_data = None 
 
     def download_crl(self, url):
-            """Скачивание CRL по URL с использованием одного запроса."""
+            """Скачивание CRL по URL с использованием одного запроса с ретраями."""
             try:
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
-                # Используем один запрос с потоковой передачей
-                with requests.get(url, timeout=30, headers=headers, stream=True) as response:
-                    response.raise_for_status()
-
-                    # Читаем всё содержимое ответа в память
-                    full_content = response.content
-                    if not full_content:
-                        logger.warning(f"Файл по URL {url} пустой.")
+                backoff = 1
+                tries = 3
+                for attempt in range(1, tries + 1):
+                    try:
+                        with requests.get(url, timeout=30, headers=headers, stream=True, verify=VERIFY_TLS) as response:
+                            response.raise_for_status()
+                            full_content = response.content
+                            if not full_content:
+                                logger.warning(f"Файл по URL {url} пустой.")
+                                return None
+                            parsed_url = urlparse(url)
+                            filename_safe_netloc = parsed_url.netloc.replace(':', '_')
+                            filename_safe_path = parsed_url.path.replace('/', '_').replace('\\', '_')
+                            filename = os.path.join(
+                                self.cache_dir,
+                                f"{filename_safe_netloc}_{filename_safe_path.lstrip('_')}"
+                            )
+                            with open(filename, 'wb') as f:
+                                f.write(full_content)
+                            logger.debug(f"Файл загружен и сохранен: {url} -> {filename}")
+                            if self.is_crl_content(full_content):
+                                logger.info(f"Успешно распознан CRL: {url}")
+                            else:
+                                logger.debug(f"Загруженный файл по URL {url} не распознан как CRL напрямую. Сохранен для анализа.")
+                            return full_content
+                    except requests.exceptions.RequestException as e:
+                        logger.error(f"Ошибка загрузки CRL {url} (попытка {attempt}/{tries}): {e}")
+                        if attempt < tries:
+                            import time
+                            time.sleep(backoff)
+                            backoff *= 2
+                            continue
                         return None
 
-                    # Логика сохранения файла в кэш (осталась без изменений)
-                    parsed_url = urlparse(url)
-                    filename_safe_netloc = parsed_url.netloc.replace(':', '_')
-                    filename_safe_path = parsed_url.path.replace('/', '_').replace('\\', '_')
-                    filename = os.path.join(
-                        self.cache_dir,
-                        f"{filename_safe_netloc}_{filename_safe_path.lstrip('_')}"
-                    )
-
-                    with open(filename, 'wb') as f:
-                        f.write(full_content)
-                    logger.debug(f"Файл загружен и сохранен: {url} -> {filename}")
-
-                    # Проверяем, является ли содержимое CRL
-                    if self.is_crl_content(full_content):
-                        logger.info(f"Успешно распознан CRL: {url}")
-                    else:
-                        logger.debug(f"Загруженный файл по URL {url} не распознан как CRL напрямую. Сохранен для анализа.")
-                    
-                    # Возвращаем содержимое в любом случае, чтобы дать шанс резервному парсеру
-                    return full_content
-
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Ошибка загрузки CRL {url}: {e}")
-                return None
             except Exception as e:
                 logger.error(f"Неизвестная ошибка загрузки CRL {url}: {e}")
                 return None
@@ -397,7 +397,7 @@ class CRLParser:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
-            response = requests.get(cdp_url, timeout=30, headers=headers)
+            response = requests.get(cdp_url, timeout=30, headers=headers, verify=VERIFY_TLS)
             response.raise_for_status()
             
             # Ищем все ссылки на .crl файлы
@@ -431,7 +431,7 @@ class CRLParser:
             for url in full_urls:
                 try:
                     # Сначала пробуем HEAD запрос
-                    head_response = requests.head(url, timeout=10, headers=headers, allow_redirects=True, verify=False)
+                    head_response = requests.head(url, timeout=10, headers=headers, allow_redirects=True, verify=VERIFY_TLS)
                     if head_response.status_code == 200:
                         content_type = head_response.headers.get('content-type', '').lower()
                         content_length = head_response.headers.get('content-length')

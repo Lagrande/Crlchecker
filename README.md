@@ -1,12 +1,34 @@
-# CRLChecker
+## CRLChecker
 
-## Описание
+CRLChecker — система мониторинга списков отозванных сертификатов (CRL) и TSL для инфраструктуры открытых ключей (PKI). Поддерживает режим мониторинга только ФНС или всех УЦ, отправляет уведомления в Telegram, экспортирует Prometheus-метрики и предоставляет health-эндпоинт.
 
-CRLChecker - это система мониторинга списков отозванных сертификатов (CRL) для обеспечения безопасности инфраструктуры открытых ключей (PKI). Система предоставляет возможность мониторинга CRL как для ФНС, так и для всех УЦ.
+### Ключевые возможности
+- Мониторинг CRL из CDP + CRL URL из TSL
+- Режимы: только ФНС (`FNS_ONLY=true`) или все УЦ (`FNS_ONLY=false`)
+- Уведомления в Telegram с антифлудом
+- Резервный парсинг CRL через OpenSSL при неудаче cryptography
+- Кэширование CRL и хранение состояния на диске
+- Prometheus-метрики на `:8000/metrics`, health на `:8000/healthz`
 
-## Версии
+### Переменные окружения
+- `TELEGRAM_BOT_TOKEN`: токен Telegram-бота
+- `TELEGRAM_CHAT_ID`: ID чата для уведомлений
+- `FNS_ONLY`: `true` — только ФНС; `false` — все УЦ
+- `VERIFY_TLS`: `true|false` — проверка TLS цепочек при HTTP-запросах (по умолчанию `true`)
+- `TSL_CHECK_INTERVAL_HOURS`: период проверки TSL (по умолчанию 3 ч)
+- `CHECK_INTERVAL`: период проверки CRL в минутах (см. `config.py`)
+- `ALERT_THRESHOLDS`: пороги (часы) для «скоро истекает» (см. `config.py`)
+- `METRICS_PORT`: порт метрик/здоровья (по умолчанию `8000`)
 
-### Версия для ФНС
+Уведомления TSL:
+- `NOTIFY_NEW_CAS`, `NOTIFY_DATE_CHANGES`, `NOTIFY_CRL_CHANGES`, `NOTIFY_STATUS_CHANGES`
+
+Уведомления CRL:
+- `NOTIFY_EXPIRING_CRL`, `NOTIFY_EXPIRED_CRL`, `NOTIFY_NEW_CRL`, `NOTIFY_MISSED_CRL`, `NOTIFY_WEEKLY_STATS`
+
+### Рекомендованные пресеты
+
+Версия для ФНС
 ```yaml
 environment:
   - TZ=Europe/Moscow
@@ -28,7 +50,7 @@ environment:
   - NOTIFY_WEEKLY_STATS=true
 ```
 
-### Версия для всех УЦ
+Версия для всех УЦ
 ```yaml
 environment:
   - TZ=Europe/Moscow
@@ -50,102 +72,75 @@ environment:
   - NOTIFY_WEEKLY_STATS=false
 ```
 
-## Типы уведомлений и их сопоставления
+### Docker Compose
+Создайте `docker-compose.yml` (пример ниже), задайте переменные окружения и запустите:
+```bash
+docker compose up -d --build
+```
 
-### 1. Уведомления TSL (Удостоверяющие Центры)
+Проверка:
+- Health: `curl http://localhost:8000/healthz` → ok
+- Metrics: `curl http://localhost:8000/metrics`
 
-| Переменная | Значение | Тип уведомления | Описание |
-|------------|----------|-----------------|----------|
-| `NOTIFY_NEW_CAS` | false/true | Новые УЦ | Уведомления о новых действующих УЦ в TSL |
-| `NOTIFY_DATE_CHANGES` | false/true | Изменения дат | Уведомления об изменениях дат аккредитации УЦ |
-| `NOTIFY_CRL_CHANGES` | false/true | Изменения CRL | Уведомления о новых или измененных CRL у действующих УЦ |
-| `NOTIFY_STATUS_CHANGES` | false/true | Изменения статуса | Уведомления об изменении статуса УЦ |
-
-### 2. Уведомления CRL (Списки Отозванных Сертификатов)
-
-| Переменная | Значение | Тип уведомления | Описание |
-|------------|----------|-----------------|----------|
-| `NOTIFY_EXPIRING_CRL` | false/true | Скоро истекает | Уведомления об истекающих CRL (по пороговым значениям) |
-| `NOTIFY_EXPIRED_CRL` | false/true | Истекший | Уведомления об истекших CRL |
-| `NOTIFY_NEW_CRL` | false/true | Новый CRL | Уведомления о новых версиях CRL |
-| `NOTIFY_MISSED_CRL` | false/true | Пропущенный | Уведомления о неопубликованных CRL |
-| `NOTIFY_WEEKLY_STATS` | false/true | Недельная статистика | Уведомления о недельной статистике отозванных сертификатов |
-
-## Особенности
-
-- **Фильтрация по ФНС**: Возможность включить/отключить мониторинг только УЦ ФНС (`FNS_ONLY=true`)
-- **Гибкое управление уведомлениями**: Каждый тип уведомлений может быть включен/отключен отдельно
-- **Поддержка нескольких источников**: Поддерживает CDP источники и известные пути к CRL файлам
-- **Уведомления через Telegram**: Интеграция с Telegram для мгновенного уведомления о событиях
-- **Резервные методы парсинга**: Использование OpenSSL в качестве резервного метода при ошибке парсинга cryptography
-
-## Конфигурация
-
-### Переменные окружения
-
-- `TELEGRAM_BOT_TOKEN` - Токен Telegram бота
-- `TELEGRAM_CHAT_ID` - ID чата для отправки уведомлений
-- `FNS_ONLY` - Режим работы: только ФНС (`true`) или все УЦ (`false`)
-- `NOTIFY_*` - Переключатели уведомлений по каждому типу
-
-### Пороговые значения уведомлений
-
-- `ALERT_THRESHOLDS` - Пороговые значения для уведомлений об истечении CRL (в часах)
-
-## Режимы работы
-
-### Режим ФНС (`FNS_ONLY=true`)
-- Мониторит только УЦ принадлежащие ФНС
-- Включены все типы уведомлений
-- Подходит для мониторинга только официальных УЦ
-
-### Режим всех УЦ (`FNS_ONLY=false`)
-- Мониторит все доступные УЦ
-- Отключены не критичные уведомления (`NOTIFY_EXPIRED_CRL=false`, `NOTIFY_WEEKLY_STATS=false`)
-- Подходит для комплексного мониторинга PKI
-
-## Установка и запуск
-
-1. Настройте переменные окружения в `docker-compose.yml`
-2. Запустите через Docker Compose
-3. Получите уведомления в Telegram при возникновении событий
-
-## Поддерживаемые события
-
-- Новые действующие УЦ в TSL
-- Изменения дат аккредитации УЦ
-- Новые или измененные CRL у действующих УЦ
-- Изменения статуса УЦ
-- Скоро истекающие CRL
-- Истекшие CRL
-- Новые версии CRL
-- Неопубликованные CRL
-- Недельная статистика отозванных сертификатов
-
-## Пример docker-compose
+### Пример docker-compose.yml
 ```yaml
-  crl-monitor:
-    build: 
-      context: ./crlchecker/
-    container_name: crl-monitor
+services:
+  crlchecker:
+    build:
+      context: .
+    container_name: crlchecker
     environment:
       - TZ=Europe/Moscow
-      - TELEGRAM_BOT_TOKEN=
-      - TELEGRAM_CHAT_ID=-
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - FNS_ONLY=false
-        # Уведомления TSL
+      - VERIFY_TLS=false
+      - METRICS_PORT=8000
+      # Уведомления TSL
       - NOTIFY_NEW_CAS=true
       - NOTIFY_DATE_CHANGES=true
       - NOTIFY_CRL_CHANGES=true
       - NOTIFY_STATUS_CHANGES=true
-        
-        # Уведомления CRL
+      # Уведомления CRL
       - NOTIFY_EXPIRING_CRL=true
       - NOTIFY_EXPIRED_CRL=false
       - NOTIFY_NEW_CRL=true
       - NOTIFY_MISSED_CRL=true
       - NOTIFY_WEEKLY_STATS=false
     volumes:
-      - ./crlchecker/data:/app/data
+      - ./data:/app/data
+    ports:
+      - "8000:8000" # /metrics, /healthz
     restart: unless-stopped
 ```
+
+Примечания:
+- Для сред с кастомными корневыми сертификатами добавьте PEM в `certs/` и пересоберите образ — он будет добавлен в trust store контейнера.
+- Если TLS к TSL хосту нестабилен, временно установите `VERIFY_TLS=false` (диагностика/байпас). Лучше добавить корректную CA-цепочку.
+
+### Локальный запуск без Compose
+```bash
+pip install -r requirements.txt
+export TELEGRAM_BOT_TOKEN=...
+export TELEGRAM_CHAT_ID=...
+python run_all_monitors.py
+```
+
+### Экспортируемые метрики (основные)
+- `crl_checks_total` — количество запусков проверки CRL
+- `crl_processed_total{result}` — обработка CRL (success/error/failed_group)
+- `crl_unique_urls` — число уникальных CRL за прогон
+- `tsl_checks_total` — количество запусков проверки TSL
+- `tsl_fetch_total{result}` — попытки загрузки TSL (success/error)
+- `tsl_active_cas` — число действующих УЦ (из TSL)
+- `tsl_crl_urls` — число CRL URL, извлечённых из TSL
+
+### Структура данных
+- Данные/состояние/логи в `/app/data` (маппьте volume для сохранности между рестартами)
+
+### Триаж проблем
+- Нет уведомлений в Telegram: проверьте `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, сетевой доступ.
+- Ошибки TLS при TSL: добавьте корневой сертификат в `certs/` и пересоберите образ либо временно `VERIFY_TLS=false`.
+- Метрики/health: проверьте проброс порта `8000` и `METRICS_PORT`.
+
+
