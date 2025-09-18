@@ -50,6 +50,11 @@ class CRLMonitor:
         self.metric_processed_total = Counter('crl_processed_total', 'Processed CRL files', ['result'], registry=MetricsRegistry.registry)
         self.metric_unique_urls = Gauge('crl_unique_urls', 'Unique CRL URLs per run', registry=MetricsRegistry.registry)
         self.metric_skipped_empty = Counter('crl_skipped_empty', 'Skipped empty CRLs with long validity', registry=MetricsRegistry.registry)
+        
+        # Новые метрики для отслеживания ошибок
+        self.metric_download_errors = Counter('crl_download_errors_total', 'CRL download errors', ['crl_name', 'error_type'], registry=MetricsRegistry.registry)
+        self.metric_parse_errors = Counter('crl_parse_errors_total', 'CRL parsing errors', ['crl_name', 'error_type'], registry=MetricsRegistry.registry)
+        self.metric_crl_status = Gauge('crl_status', 'CRL processing status', ['crl_name', 'status'], registry=MetricsRegistry.registry)
 
     def load_state(self):
         """Загрузка состояния из файла"""
@@ -287,12 +292,16 @@ class CRLMonitor:
                 crl_data = self.parser.download_crl(url)
                 if not crl_data:
                     last_error = f"Не удалось загрузить CRL с {url}"
+                    self.metric_download_errors.labels(crl_name=filename, error_type='download_failed').inc()
+                    self.metric_crl_status.labels(crl_name=filename, status='download_failed').set(1)
                     continue
 
                 # 2. Парсинг CRL (может вернуть объект cryptography или dict)
                 parsed_object = self.parser.parse_crl(crl_data, crl_name=filename)
                 if not parsed_object:
                     last_error = f"Не удалось распарсить CRL '{filename}' с {url}"
+                    self.metric_parse_errors.labels(crl_name=filename, error_type='parse_failed').inc()
+                    self.metric_crl_status.labels(crl_name=filename, status='parse_failed').set(1)
                     continue
 
                 # 3. Преобразование результата в стандартизированный словарь (crl_info)
@@ -305,6 +314,8 @@ class CRLMonitor:
                 
                 if not crl_info:
                     last_error = f"Не удалось извлечь информацию из CRL '{filename}'"
+                    self.metric_parse_errors.labels(crl_name=filename, error_type='info_extraction_failed').inc()
+                    self.metric_crl_status.labels(crl_name=filename, status='info_extraction_failed').set(1)
                     continue
                 
                 # 4. Проверка на пустой CRL с длительным сроком действия
@@ -324,6 +335,7 @@ class CRLMonitor:
                 
                 crl_processed = True
                 self.metric_processed_total.labels(result='success').inc()
+                self.metric_crl_status.labels(crl_name=filename, status='success').set(1)
                 logger.info(f"Успешно обработан CRL '{filename}' с {url}")
                 break # Успех, выходим из цикла по зеркалам
                 
@@ -331,12 +343,15 @@ class CRLMonitor:
                 last_error = f"Ошибка обработки CRL '{filename}' с {url}: {e}"
                 logger.error(last_error, exc_info=True)
                 self.metric_processed_total.labels(result='error').inc()
+                self.metric_parse_errors.labels(crl_name=filename, error_type='exception').inc()
+                self.metric_crl_status.labels(crl_name=filename, status='exception').set(1)
                 continue
 
         if not crl_processed:
             error_msg = f"Не удалось обработать CRL '{filename}' ни с одного из {len(urls)} URL. Последняя ошибка: {last_error}"
             logger.error(error_msg)
             self.metric_processed_total.labels(result='failed_group').inc()
+            self.metric_crl_status.labels(crl_name=filename, status='failed_group').set(1)
 
     def should_skip_empty_crl(self, crl_info, filename):
         """Проверяет, нужно ли пропустить пустой CRL с длительным сроком действия"""
