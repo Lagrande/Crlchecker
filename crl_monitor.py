@@ -45,7 +45,7 @@ class CRLMonitor:
         self.weekly_stats = self.load_weekly_stats()
         # Для отслеживания уже залогированных пустых CRL
         self.logged_empty_crls = self.load_logged_empty_crls()
-        # Метрики
+        # Метрики - используем общий реестр
         self.metric_checks_total = Counter('crl_checks_total', 'Total CRL check runs', registry=MetricsRegistry.registry)
         self.metric_processed_total = Counter('crl_processed_total', 'Processed CRL files', ['result'], registry=MetricsRegistry.registry)
         self.metric_unique_urls = Gauge('crl_unique_urls', 'Unique CRL URLs per run', registry=MetricsRegistry.registry)
@@ -217,6 +217,34 @@ class CRLMonitor:
 
     def run_check(self):
         """Основная проверка (высокоуровневая логика)."""
+        try:
+            logger.info("Начало проверки CRL...")
+            crl_urls = self.get_all_crl_urls()
+
+            # Группировка URL по имени файла
+            url_groups = defaultdict(list)
+            for url in crl_urls:
+                filename = os.path.basename(url)
+                url_groups[filename].append(url)
+
+            logger.info(f"Найдено {len(url_groups)} уникальных CRL для проверки.")
+
+            # Обработка каждой группы URL
+            for filename, urls_in_group in url_groups.items():
+                self.process_crl_group(filename, urls_in_group)
+
+            # Проверка неопубликованных CRL после всех попыток загрузки
+            self.check_missed_crl()
+            
+            # Сохранение состояния после полного цикла проверок
+            self.save_state()
+            logger.info("Проверка CRL завершена.")
+
+        except Exception as e:
+            logger.error(f"Критическая ошибка во время проверки CRL: {e}", exc_info=True)
+
+    def metric_run_check(self):
+        """Основная проверка с метриками (высокоуровневая логика)."""
         try:
             logger.info("Начало проверки CRL...")
             self.metric_checks_total.inc()
@@ -599,33 +627,6 @@ class CRLMonitor:
             self.weekly_stats = {}
             self.save_weekly_stats()
 
-    def run_check(self):
-        """Основная проверка (высокоуровневая логика)."""
-        try:
-            logger.info("Начало проверки CRL...")
-            crl_urls = self.get_all_crl_urls()
-
-            # Группировка URL по имени файла
-            url_groups = defaultdict(list)
-            for url in crl_urls:
-                filename = os.path.basename(url)
-                url_groups[filename].append(url)
-
-            logger.info(f"Найдено {len(url_groups)} уникальных CRL для проверки.")
-
-            # Обработка каждой группы URL
-            for filename, urls_in_group in url_groups.items():
-                self.process_crl_group(filename, urls_in_group)
-
-            # Проверка неопубликованных CRL после всех попыток загрузки
-            self.check_missed_crl()
-            
-            # Сохранение состояния после полного цикла проверок
-            self.save_state()
-            logger.info("Проверка CRL завершена.")
-
-        except Exception as e:
-            logger.error(f"Критическая ошибка во время проверки CRL: {e}", exc_info=True)
 
     def process_crl_group(self, filename, urls):
         """Обрабатывает группу URL-адресов, ведущих к одному и тому же файлу CRL."""
@@ -749,16 +750,16 @@ class CRLMonitor:
 
     def setup_schedule(self):
         """Настройка расписания"""
-        # Основная проверка
-        schedule.every(CHECK_INTERVAL).minutes.do(self.run_check)
+        # Основная проверка с метриками
+        schedule.every(CHECK_INTERVAL).minutes.do(self.metric_run_check)
         # Недельная статистика по воскресеньям в 23:59
         schedule.every().sunday.at("23:59").do(self.send_weekly_stats)
 
     def run(self):
         """Запуск монитора"""
         logger.info("Запуск CRL Monitor")
-        # Первая проверка
-        self.run_check()
+        # Первая проверка с метриками
+        self.metric_run_check()
         # Настройка расписания
         self.setup_schedule()
         # Основной цикл
