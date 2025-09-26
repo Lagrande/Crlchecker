@@ -435,66 +435,66 @@ class TSLMonitor:
             pass
         
         # --- Отправка уведомлений для TSL ---
-        if changes['new_cas']:
+        if changes['new_cas'] and NOTIFY_NEW_CAS:
             for ca in changes['new_cas']:
                 self.notifier.send_tsl_new_ca(ca)
         
-        if changes['removed_cas']:
+        if changes['removed_cas'] and NOTIFY_REMOVED_CAS:
             for ca in changes['removed_cas']:
                 self.notifier.send_tsl_removed_ca(ca)
         
-        if changes['name_changes']:
+        if changes['name_changes'] and NOTIFY_NAME_CHANGES:
             for change in changes['name_changes']:
                 self.notifier.send_tsl_name_change(change)
         
-        if changes['short_name_changes']:
+        if changes['short_name_changes'] and NOTIFY_SHORT_NAME_CHANGES:
             for change in changes['short_name_changes']:
                 self.notifier.send_tsl_short_name_change(change)
         
-        if changes['ogrn_changes']:
+        if changes['ogrn_changes'] and NOTIFY_OGRN_CHANGES:
             for change in changes['ogrn_changes']:
                 self.notifier.send_tsl_ogrn_change(change)
         
-        if changes['inn_changes']:
+        if changes['inn_changes'] and NOTIFY_INN_CHANGES:
             for change in changes['inn_changes']:
                 self.notifier.send_tsl_inn_change(change)
         
-        if changes['email_changes']:
+        if changes['email_changes'] and NOTIFY_EMAIL_CHANGES:
             for change in changes['email_changes']:
                 self.notifier.send_tsl_email_change(change)
         
-        if changes['website_changes']:
+        if changes['website_changes'] and NOTIFY_WEBSITE_CHANGES:
             for change in changes['website_changes']:
                 self.notifier.send_tsl_website_change(change)
         
-        if changes['registry_url_changes']:
+        if changes['registry_url_changes'] and NOTIFY_REGISTRY_URL_CHANGES:
             for change in changes['registry_url_changes']:
                 self.notifier.send_tsl_registry_url_change(change)
         
-        if changes['address_changes']:
+        if changes['address_changes'] and NOTIFY_ADDRESS_CHANGES:
             for change in changes['address_changes']:
                 self.notifier.send_tsl_address_change(change)
         
-        if changes['date_changes']:
+        if changes['date_changes'] and NOTIFY_DATE_CHANGES:
             for change in changes['date_changes']:
                 self.notifier.send_tsl_date_change(change, change['old_date'], change['new_date'])
         
-        if changes['crl_changes']:
+        if changes['crl_changes'] and NOTIFY_CRL_CHANGES:
             for change in changes['crl_changes']:
                 if change['action'] == 'added':
                     self.notifier.send_tsl_crl_added(change)
                 elif change['action'] == 'removed':
                     self.notifier.send_tsl_crl_removed(change)
         
-        if changes['crl_url_changes']:
+        if changes['crl_url_changes'] and NOTIFY_CRL_CHANGES:
             for change in changes['crl_url_changes']:
                 self.notifier.send_tsl_crl_url_change(change)
         
-        if changes['status_changes']:
+        if changes['status_changes'] and NOTIFY_STATUS_CHANGES:
             for change in changes['status_changes']:
                 self.notifier.send_tsl_status_change(change, change['reason'])
         
-        if changes['other_changes']:
+        if changes['other_changes'] and NOTIFY_OTHER_CHANGES:
             for change in changes['other_changes']:
                 self.notifier.send_tsl_other_change(change)
 

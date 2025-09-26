@@ -9,9 +9,21 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID')
 # --- Настройки уведомлений ---
 # Включение/отключение различных типов уведомлений
 NOTIFY_NEW_CAS = os.getenv('NOTIFY_NEW_CAS', 'true').lower() == 'true'  # Новые УЦ
+NOTIFY_REMOVED_CAS = os.getenv('NOTIFY_REMOVED_CAS', 'true').lower() == 'true'  # Удаленные УЦ
 NOTIFY_DATE_CHANGES = os.getenv('NOTIFY_DATE_CHANGES', 'true').lower() == 'true'  # Изменения дат
 NOTIFY_CRL_CHANGES = os.getenv('NOTIFY_CRL_CHANGES', 'true').lower() == 'true'  # Изменения CRL
 NOTIFY_STATUS_CHANGES = os.getenv('NOTIFY_STATUS_CHANGES', 'true').lower() == 'true'  # Изменения статуса УЦ
+NOTIFY_NAME_CHANGES = os.getenv('NOTIFY_NAME_CHANGES', 'true').lower() == 'true'  # Изменения названий УЦ
+NOTIFY_SHORT_NAME_CHANGES = os.getenv('NOTIFY_SHORT_NAME_CHANGES', 'true').lower() == 'true'  # Изменения кратких названий
+NOTIFY_OGRN_CHANGES = os.getenv('NOTIFY_OGRN_CHANGES', 'true').lower() == 'true'  # Изменения ОГРН
+NOTIFY_INN_CHANGES = os.getenv('NOTIFY_INN_CHANGES', 'true').lower() == 'true'  # Изменения ИНН
+NOTIFY_EMAIL_CHANGES = os.getenv('NOTIFY_EMAIL_CHANGES', 'true').lower() == 'true'  # Изменения email
+NOTIFY_WEBSITE_CHANGES = os.getenv('NOTIFY_WEBSITE_CHANGES', 'true').lower() == 'true'  # Изменения веб-сайтов
+NOTIFY_REGISTRY_URL_CHANGES = os.getenv('NOTIFY_REGISTRY_URL_CHANGES', 'true').lower() == 'true'  # Изменения URL реестров
+NOTIFY_ADDRESS_CHANGES = os.getenv('NOTIFY_ADDRESS_CHANGES', 'true').lower() == 'true'  # Изменения адресов
+NOTIFY_PAK_CHANGES = os.getenv('NOTIFY_PAK_CHANGES', 'true').lower() == 'true'  # Изменения ПАК
+NOTIFY_CERTIFICATE_CHANGES = os.getenv('NOTIFY_CERTIFICATE_CHANGES', 'true').lower() == 'true'  # Изменения сертификатов
+NOTIFY_OTHER_CHANGES = os.getenv('NOTIFY_OTHER_CHANGES', 'true').lower() == 'true'  # Прочие изменения
 NOTIFY_EXPIRING_CRL = os.getenv('NOTIFY_EXPIRING_CRL', 'true').lower() == 'true'  # Истекающие CRL
 NOTIFY_EXPIRED_CRL = os.getenv('NOTIFY_EXPIRED_CRL', 'true').lower() == 'true'  # Истекшие CRL
 NOTIFY_NEW_CRL = os.getenv('NOTIFY_NEW_CRL', 'true').lower() == 'true'  # Новые версии CRL
