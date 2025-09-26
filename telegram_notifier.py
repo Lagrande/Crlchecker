@@ -119,7 +119,7 @@ class TelegramNotifier:
                 return str(dt)
         return "Не указано"
 
-    def send_expiring_crl_alert(self, crl_name, time_left_hours, next_update, crl_url):
+    def send_expiring_crl_alert(self, crl_name, time_left_hours, next_update, crl_url, size_mb=None, ca_name=None, ca_reg_number=None):
         """Уведомление об истекающем CRL"""
         if not NOTIFY_EXPIRING_CRL:
             logger.debug("Уведомления об истекающих CRL отключены в конфигурации.")
@@ -128,6 +128,8 @@ class TelegramNotifier:
         message = (
             f"⚠️ <b>ВНИМАНИЕ: CRL скоро истекает</b>\n"
             f"📁 Имя файла: <code>{crl_name}</code>\n"
+            f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный УЦ'}</b>\n"
+            f"🔢 Реестровый номер: <code>{ca_reg_number or 'Неизвестный номер'}</code>\n"
             f"🔗 URL: <code>{crl_url}</code>\n"
             f"⏰ Осталось: <b>{time_left_hours:.1f} часа</b>\n"
             f"📅 Следующее обновление: {self.format_datetime(next_update)}\n"
@@ -135,7 +137,7 @@ class TelegramNotifier:
         )
         self.send_message(message)
 
-    def send_expired_crl_alert(self, crl_name, expired_time, crl_url):
+    def send_expired_crl_alert(self, crl_name, expired_time, crl_url, size_mb=None, ca_name=None, ca_reg_number=None):
         """Уведомление об истекшем CRL"""
         if not NOTIFY_EXPIRED_CRL:
             logger.debug("Уведомления об истекших CRL отключены в конфигурации.")
@@ -144,13 +146,15 @@ class TelegramNotifier:
         message = (
             f"🚨 <b>КРИТИЧНО: CRL истек</b>\n"
             f"📁 Имя файла: <code>{crl_name}</code>\n"
+            f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный УЦ'}</b>\n"
+            f"🔢 Реестровый номер: <code>{ca_reg_number or 'Неизвестный номер'}</code>\n"
             f"🔗 URL: <code>{crl_url}</code>\n"
             f"⏰ Истек: {self.format_datetime(expired_time)}\n"
             f"🕐 Текущее время: {self.format_datetime(now_msk)}"
         )
         self.send_message(message)
 
-    def send_new_crl_info(self, crl_name, revoked_count, revoked_increase, categories, publication_time, crl_number, crl_url, total_revoked, next_update):
+    def send_new_crl_info(self, crl_name, revoked_count, revoked_increase, categories, publication_time, crl_number, crl_url, total_revoked, next_update, size_mb=None, ca_name=None, ca_reg_number=None):
         """Уведомление о новом CRL и приросте отозванных сертификатов"""
         if not NOTIFY_NEW_CRL:
             logger.debug("Уведомления о новых CRL отключены в конфигурации.")
@@ -161,6 +165,8 @@ class TelegramNotifier:
         message = (
             f"🆕 <b>Новая версия CRL опубликована</b>\n"
             f"📁 Имя файла: <code>{crl_name}</code>\n"
+            f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный УЦ'}</b>\n"
+            f"🔢 Реестровый номер: <code>{ca_reg_number or 'Неизвестный номер'}</code>\n"
             f"🔗 URL: <code>{crl_url}</code>\n"
             f"🔢 Номер CRL: <b>{crl_number}</b>\n"
             f"📄 Всего отозвано: <b>{total_revoked}</b>\n"
@@ -168,11 +174,17 @@ class TelegramNotifier:
             f"📅 Время публикации: {self.format_datetime(publication_time)}\n" # Используем переданное publication_time
             f"📅 Следующее обновление: {self.format_datetime(next_update)}\n" # Используем переданное next_update
         )
+        # Опционально добавляем размер CRL
+        if SHOW_CRL_SIZE_MB and size_mb is not None:
+            try:
+                message += f"📦 Размер CRL: <b>{float(size_mb):.2f} МБ</b>\n"
+            except Exception:
+                pass
         if categories_text:
             message += f"📊 По категориям:\n{categories_text}"
         self.send_message(message)
 
-    def send_missed_crl_alert(self, crl_name, expected_update_time, crl_url):
+    def send_missed_crl_alert(self, crl_name, expected_update_time, crl_url, ca_name=None, ca_reg_number=None):
         """Уведомление о неопубликованном CRL"""
         if not NOTIFY_MISSED_CRL:
             logger.debug("Уведомления о пропущенных CRL отключены в конфигурации.")
@@ -181,7 +193,9 @@ class TelegramNotifier:
         message = (
             f"❌ <b>ОШИБКА: CRL не опубликован вовремя</b>\n"
             f"📁 Имя файла: <code>{crl_name}</code>\n"
-            f"🔗 URL: <code>{crl_url}</code>\n" # Добавляем URL
+            f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный УЦ'}</b>\n"
+            f"🔢 Реестровый номер: <code>{ca_reg_number or 'Неизвестный номер'}</code>\n"
+            f"🔗 URL: <code>{crl_url}</code>\n"
             f"📅 Ожидалось: {self.format_datetime(expected_update_time)}\n"
             f"🕐 Текущее время: {self.format_datetime(now_msk)}"
         )
@@ -253,6 +267,20 @@ class TelegramNotifier:
         )
         self.send_message(message)
 
+    def send_tsl_status_change(self, ca_info, reason):
+        """Уведомление об изменении статуса УЦ"""
+        if not NOTIFY_STATUS_CHANGES:
+            logger.debug("Уведомления об изменениях статуса УЦ отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        message = (
+            f"❌ <b>Изменение статуса УЦ</b>\n"
+            f"🏢 Название: <b>{ca_info['name']}</b>\n"
+            f"🔢 Реестровый номер: <code>{ca_info['reg_number']}</code>\n"
+            f"📝 Причина: {reason}\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
     def send_tsl_status_change(self, ca_info, reason):
         """Уведомление об изменении статуса УЦ"""
         if not NOTIFY_STATUS_CHANGES:

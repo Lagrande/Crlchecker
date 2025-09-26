@@ -7,13 +7,24 @@ import os
 import logging
 from datetime import datetime, timezone
 import schedule
+import re
 import time
 from collections import defaultdict
 import html # Для экранирования HTML
 from config import *
+from db import init_db, bulk_upsert_ca_mapping
+
+# Отключаем предупреждения urllib3 при отключенной проверке TLS
+if not VERIFY_TLS:
+    try:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    except Exception:
+        pass
 from prometheus_client import Counter, Gauge
 from metrics_server import MetricsRegistry
 from telegram_notifier import TelegramNotifier
+from db import init_db, bulk_upsert_ca_mapping
 
 # Настройка логирования
 logging.basicConfig(
@@ -61,14 +72,21 @@ class TSLMonitor:
         except Exception as e:
             logger.error(f"Ошибка сохранения состояния TSL: {e}")
 
-    def save_crl_urls(self, crl_urls_set):
-        """Сохранение уникальных URL CRL в файл"""
+    def save_crl_urls(self, crl_urls_set, ca_info_map=None):
+        """Сохранение уникальных URL CRL в файл и карты URL -> УЦ"""
         try:
             sorted_urls = sorted(list(crl_urls_set)) # Сортируем для консистентности
             with open(TSL_CRL_URLS_FILE, 'w', encoding='utf-8') as f:
                 for url in sorted_urls:
                     f.write(f"{url}\n")
             logger.info(f"Сохранено {len(sorted_urls)} уникальных URL CRL в {TSL_CRL_URLS_FILE}")
+            
+            # Сохраняем карту URL -> УЦ если предоставлена
+            if ca_info_map:
+                ca_mapping_file = os.path.join(DATA_DIR, 'crl_url_to_ca_mapping.json')
+                with open(ca_mapping_file, 'w', encoding='utf-8') as f:
+                    json.dump(ca_info_map, f, ensure_ascii=False, indent=2)
+                logger.info(f"Сохранена карта URL -> УЦ в {ca_mapping_file}")
         except Exception as e:
             logger.error(f"Ошибка сохранения URL CRL: {e}")
 
@@ -128,11 +146,45 @@ class TSLMonitor:
             if isinstance(xml_content, bytes):
                 xml_content = xml_content.decode('utf-8')
             root = ET.fromstring(xml_content)
+            # Подготовим фильтры: приоритет — по ОГРН, иначе — по префиксам реестровых номеров
+            ogrn_filters = None
+            numeric_filters = None
+            if TSL_OGRN_LIST:
+                ogrn_filters = [re.sub(r'\D', '', n) for n in TSL_OGRN_LIST if n]
+                ogrn_filters = [n for n in ogrn_filters if n]
+            elif TSL_REGISTRY_NUMBERS:
+                numeric_filters = [re.sub(r'\D', '', n) for n in TSL_REGISTRY_NUMBERS if n]
+                numeric_filters = [n for n in numeric_filters if n]
+
+            matched_count = 0
+            total_active_seen = 0
             for ca_element in root.findall('.//УдостоверяющийЦентр'):
                 status_element = ca_element.find('.//Статус')
                 if status_element is not None and status_element.text == 'Действует':
+                    total_active_seen += 1
                     reg_number_element = ca_element.find('.//РеестровыйНомер')
                     name_element = ca_element.find('.//Название')
+                    # Фильтр по ОГРН (строгое совпадение цифр) имеет приоритет
+                    if ogrn_filters is not None:
+                        ogrn_element = ca_element.find('.//ОГРН')
+                        ogrn_val = ogrn_element.text.strip() if (ogrn_element is not None and ogrn_element.text) else None
+                        if not ogrn_val:
+                            continue
+                        ogrn_digits = re.sub(r'\D', '', ogrn_val)
+                        if ogrn_digits not in ogrn_filters:
+                            continue
+                        else:
+                            matched_count += 1
+                    # Иначе — фильтр по реестровым номерам (по префиксу цифр)
+                    elif numeric_filters is not None:
+                        reg_val = reg_number_element.text.strip() if (reg_number_element is not None and reg_number_element.text) else None
+                        if not reg_val:
+                            continue
+                        reg_digits = re.sub(r'\D', '', reg_val)
+                        if not any(reg_digits.startswith(flt) for flt in numeric_filters):
+                            continue
+                        else:
+                            matched_count += 1
                     effective_date_iso = None
                     history_statuses = ca_element.findall('.//ИсторияСтатусовАккредитации/СтатусАккредитации')
                     for status in reversed(history_statuses):
@@ -168,15 +220,30 @@ class TSLMonitor:
                             'effective_date': effective_date_iso,
                             'crl_urls': list(ca_crl_urls) # Сохраняем CRL для этого УЦ
                         }
+            if ogrn_filters is not None:
+                logger.info(f"Фильтр TSL по ОГРН: {ogrn_filters}")
+                logger.info(f"Всего действующих УЦ в TSL: {total_active_seen}, прошло фильтр: {matched_count}")
+            elif numeric_filters is not None:
+                logger.info(f"Фильтр TSL по префиксам реестровых номеров: {numeric_filters}")
+                logger.info(f"Всего действующих УЦ в TSL: {total_active_seen}, прошло фильтр: {matched_count}")
+            # Создаем карту URL -> УЦ для передачи в CRL Monitor
+            url_to_ca_map = {}
+            for reg_number, ca_info in active_cas.items():
+                for crl_url in ca_info.get('crl_urls', []):
+                    url_to_ca_map[crl_url] = {
+                        'name': ca_info['name'],
+                        'reg_number': reg_number
+                    }
+            
             logger.info(f"Найдено {len(active_cas)} действующих УЦ")
             logger.info(f"Извлечено {len(all_crl_urls)} уникальных URL CRL из TSL")
-            return active_cas, all_crl_urls
+            return active_cas, all_crl_urls, url_to_ca_map
         except ET.ParseError as e:
             logger.error(f"Ошибка парсинга XML TSL: {e}")
-            return {}, set()
+            return {}, set(), {}
         except Exception as e:
             logger.error(f"Неизвестная ошибка при парсинге TSL: {e}")
-            return {}, set()
+            return {}, set(), {}
 
     def compare_states(self, old_state, new_state):
         """Сравнение состояний и формирование отчета об изменениях"""
@@ -257,18 +324,35 @@ class TSLMonitor:
         """Основная проверка TSL"""
         try:
             logger.info("Начало проверки TSL...")
+            try:
+                init_db()
+            except Exception as e:
+                logger.error(f"Не удалось инициализировать БД: {e}")
             self.metric_tsl_checks_total.inc()
             xml_content = self.download_tsl()
             if not xml_content:
                 return
-            current_state, all_crl_urls = self.parse_tsl(xml_content)
+            current_state, all_crl_urls, url_to_ca_map = self.parse_tsl(xml_content)
             if not current_state:
                 logger.warning("Не удалось извлечь данные об УЦ из TSL")
                 return
             self.metric_active_cas.set(len(current_state))
             self.metric_crl_urls.set(len(all_crl_urls))
-            # Сохраняем все найденные URL CRL
-            self.save_crl_urls(all_crl_urls)
+            # Сохраняем все найденные URL CRL и карту URL -> УЦ
+            self.save_crl_urls(all_crl_urls, url_to_ca_map)
+            # Также сохраняем в БД (идемпотентно)
+            try:
+                init_db()
+                bulk_upsert_ca_mapping(url_to_ca_map)
+                logger.info(f"В БД сохранено соответствий URL->УЦ: {len(url_to_ca_map)}")
+            except Exception as e:
+                logger.error(f"Ошибка записи карты URL->УЦ в БД: {e}")
+            # Пишем соответствие URL->УЦ в БД
+            try:
+                bulk_upsert_ca_mapping(url_to_ca_map)
+                logger.info(f"В БД сохранено соответствий URL->УЦ: {len(url_to_ca_map)}")
+            except Exception as e:
+                logger.error(f"Ошибка записи карты URL->УЦ в БД: {e}")
             changes = self.compare_states(self.state, current_state)
             if any(changes.values()):
                 self.send_notifications(changes, no_changes=False)

@@ -11,6 +11,14 @@ import re
 from datetime import datetime
 from config import VERIFY_TLS
 
+# Отключаем предупреждения urllib3 при отключенной проверке TLS
+if not VERIFY_TLS:
+    try:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    except Exception:
+        pass
+
 logger = logging.getLogger(__name__)
 
 class CRLParser:
@@ -457,6 +465,14 @@ class CRLParser:
                     
             final_valid_urls = list(set(valid_urls)) # Убираем дубликаты
             logger.info(f"Найдено {len(final_valid_urls)} потенциальных CRL URL из {cdp_url} (после проверки)")
+            return final_valid_urls
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка получения CRL URL из {cdp_url}: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Неизвестная ошибка получения CRL URL из {cdp_url}: {e}")
+            return []
+
             return final_valid_urls
         except requests.exceptions.RequestException as e:
             logger.error(f"Ошибка получения CRL URL из {cdp_url}: {e}")

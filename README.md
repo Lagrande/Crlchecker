@@ -20,6 +20,14 @@ CRLChecker — система мониторинга списков отозва
 - `ALERT_THRESHOLDS`: пороги (часы) для «скоро истекает» (см. `config.py`)
 - `METRICS_PORT`: порт метрик/здоровья (по умолчанию `8000`)
 
+Фильтрация TSL по УЦ:
+- `TSL_OGRN_LIST`: список ОГРН для точного отбора УЦ из TSL (через запятую). Пример: `TSL_OGRN_LIST=1047702026701,1027700132195`
+- `TSL_REGISTRY_NUMBERS`: список префиксов реестровых номеров для отбора УЦ (через запятую). Пример: `TSL_REGISTRY_NUMBERS=72,10,123`
+
+Принципы фильтрации:
+- Если задан `TSL_OGRN_LIST`, он имеет приоритет и используется вместо `TSL_REGISTRY_NUMBERS`.
+- Для `TSL_REGISTRY_NUMBERS` используется сопоставление по префиксу числа (цифры из номера в TSL нормализуются, нецифровые символы игнорируются).
+
 Уведомления TSL:
 - `NOTIFY_NEW_CAS`, `NOTIFY_DATE_CHANGES`, `NOTIFY_CRL_CHANGES`, `NOTIFY_STATUS_CHANGES`
 
@@ -95,6 +103,9 @@ services:
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - FNS_ONLY=false
       - VERIFY_TLS=false
+      # Фильтрация TSL
+      - TSL_OGRN_LIST=
+      - TSL_REGISTRY_NUMBERS=
       - METRICS_PORT=8000
       # Уведомления TSL
       - NOTIFY_NEW_CAS=true

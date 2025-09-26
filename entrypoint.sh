@@ -3,6 +3,51 @@
 # Создаем директорию для данных
 mkdir -p /app/data/crl_cache
 mkdir -p /app/data/logs
+mkdir -p /app/data/stats
+
+# Init DB schema and optionally preload URL->CA mapping from JSON
+python - <<'PY'
+import os, json
+from db import init_db, bulk_upsert_ca_mapping, bulk_upsert_crl_state
+
+try:
+    init_db()
+    mapping_json = '/app/data/crl_url_to_ca_mapping.json'
+    if os.path.exists(mapping_json):
+        try:
+            data = json.load(open(mapping_json, encoding='utf-8'))
+            if isinstance(data, dict) and data:
+                bulk_upsert_ca_mapping(data)
+                print(f"Preloaded URL->CA mapping into DB: {len(data)} entries")
+        except Exception as e:
+            print(f"Failed to preload mapping JSON: {e}")
+
+    # Migrate CRL state JSON into DB only if table is empty (first run)
+    state_json = '/app/data/crl_state.json'
+    try:
+        import sqlite3
+        from config import DB_PATH
+        should_import = False
+        with sqlite3.connect(DB_PATH) as conn:
+            try:
+                cur = conn.execute('SELECT COUNT(*) FROM crl_state')
+                cnt = cur.fetchone()[0]
+                should_import = (cnt == 0)
+            except Exception:
+                should_import = True
+        if should_import and os.path.exists(state_json):
+            try:
+                st = json.load(open(state_json, encoding='utf-8'))
+                if isinstance(st, dict) and st:
+                    bulk_upsert_crl_state(st)
+                    print(f"Preloaded CRL state into DB: {len(st)} entries")
+            except Exception as e:
+                print(f"Failed to preload CRL state JSON: {e}")
+    except Exception as e:
+        print(f"Failed to check DB state before preload: {e}")
+except Exception as e:
+    print(f"DB init failed: {e}")
+PY
 
 # Устанавливаем права доступа (опционально, если требуется)
 # chown -R 1000:1000 /app/data

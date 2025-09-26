@@ -10,6 +10,12 @@ services:
       - FNS_ONLY=false
       - VERIFY_TLS=false
       - METRICS_PORT=8000
+      # Новые опции
+      - SHOW_CRL_SIZE_MB=true
+      # Перечень реестровых номеров через запятую; пусто — без фильтра
+      # - TSL_REGISTRY_NUMBERS=81
+      # Перечень ОГРН через запятую; если задан, используется фильтр по ОГРН
+      # - TSL_OGRN_LIST=1047707030513
       # Уведомления TSL
       - NOTIFY_NEW_CAS=true
       - NOTIFY_DATE_CHANGES=true
@@ -23,7 +29,7 @@ services:
       - NOTIFY_WEEKLY_STATS=false
     volumes:
       - ./data:/app/data
+    restart: unless-stopped
     expose:
       - "8000" # доступно только внутри docker-сети (для дашборда/прометея)
-    restart: unless-stopped
 

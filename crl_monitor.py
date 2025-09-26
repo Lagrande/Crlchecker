@@ -8,10 +8,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from config import *
+from db import init_db, get_ca_by_crl_url
 from crl_parser import CRLParser
 from telegram_notifier import TelegramNotifier
 from prometheus_client import Counter, Gauge
 from metrics_server import MetricsRegistry
+from db import weekly_details_bulk_upsert
 
 # Настройка логирования
 logging.basicConfig(
@@ -45,6 +47,8 @@ class CRLMonitor:
         self.weekly_stats = self.load_weekly_stats()
         # Для отслеживания уже залогированных пустых CRL
         self.logged_empty_crls = self.load_logged_empty_crls()
+        # Флаг холодного старта: чтобы не слать все CRL как «новые» после рестарта
+        self.cold_start = True
         # Метрики - используем общий реестр
         self.metric_checks_total = Counter('crl_checks_total', 'Total CRL check runs', registry=MetricsRegistry.registry)
         self.metric_processed_total = Counter('crl_processed_total', 'Processed CRL files', ['result'], registry=MetricsRegistry.registry)
@@ -55,78 +59,163 @@ class CRLMonitor:
         self.metric_download_errors = Counter('crl_download_errors_total', 'CRL download errors', ['crl_name', 'error_type'], registry=MetricsRegistry.registry)
         self.metric_parse_errors = Counter('crl_parse_errors_total', 'CRL parsing errors', ['crl_name', 'error_type'], registry=MetricsRegistry.registry)
         self.metric_crl_status = Gauge('crl_status', 'CRL processing status', ['crl_name', 'status'], registry=MetricsRegistry.registry)
+        
+        # Загружаем карту URL -> УЦ
+        self.url_to_ca_map = self.load_url_to_ca_mapping()
+        # Инициализируем БД (идемпотентно)
+        try:
+            init_db()
+        except Exception as e:
+            logger.error(f"Не удалось инициализировать БД: {e}")
 
     def load_state(self):
-        """Загрузка состояния из файла"""
+        """Загрузка состояния: сначала из БД, затем из файла (fallback)."""
+        if DB_ENABLED:
+            try:
+                from db import crl_state_get_all
+                return crl_state_get_all()
+            except Exception as e:
+                logger.error(f"Ошибка загрузки состояния из БД: {e}")
         if os.path.exists(STATE_FILE):
             try:
                 with open(STATE_FILE, 'r', encoding='utf-8') as f:
-                    raw_state = json.load(f)
-                    # Валидация и нормализация дат в состоянии
-                    for crl_name, crl_state in raw_state.items():
-                        if 'this_update' in crl_state and crl_state['this_update']:
-                            try:
-                                dt = datetime.fromisoformat(crl_state['this_update'])
-                                crl_state['this_update'] = ensure_moscow_tz(dt).isoformat()
-                            except ValueError:
-                                logger.warning(f"Некорректная дата this_update для {crl_name}: {crl_state['this_update']}")
-                        
-                        if 'next_update' in crl_state and crl_state['next_update']:
-                            try:
-                                dt = datetime.fromisoformat(crl_state['next_update'])
-                                crl_state['next_update'] = ensure_moscow_tz(dt).isoformat()
-                            except ValueError:
-                                logger.warning(f"Некорректная дата next_update для {crl_name}: {crl_state['next_update']}")
-                        
-                        if 'last_check' in crl_state and crl_state['last_check']:
-                            try:
-                                dt = datetime.fromisoformat(crl_state['last_check'])
-                                crl_state['last_check'] = ensure_moscow_tz(dt).isoformat()
-                            except ValueError:
-                                logger.warning(f"Некорректная дата last_check для {crl_name}: {crl_state['last_check']}")
-                        
-                        # Проверка last_alerts
-                        if 'last_alerts' in crl_state and isinstance(crl_state['last_alerts'], dict):
-                            for alert_key, alert_time_str in crl_state['last_alerts'].items():
-                                try:
-                                    dt = datetime.fromisoformat(alert_time_str)
-                                    crl_state['last_alerts'][alert_key] = ensure_moscow_tz(dt).isoformat()
-                                except ValueError:
-                                    logger.warning(f"Некорректная дата last_alerts[{alert_key}] для {crl_name}: {alert_time_str}")
-                    return raw_state
+                    return json.load(f)
             except Exception as e:
-                logger.error(f"Ошибка загрузки состояния: {e}")
+                logger.error(f"Ошибка загрузки состояния из файла: {e}")
         return {}
 
-    def save_state(self):
-        """Сохранение состояния в файл"""
+    def load_url_to_ca_mapping(self):
+        """Загрузка карты URL -> УЦ из файла или извлечение из TSL.xml"""
+        ca_mapping_file = os.path.join(DATA_DIR, 'crl_url_to_ca_mapping.json')
+        if os.path.exists(ca_mapping_file):
+            try:
+                with open(ca_mapping_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Ошибка загрузки карты URL -> УЦ: {e}")
+        
+        # Если файл карты не существует, извлекаем информацию из TSL.xml
+        logger.info("Карта URL -> УЦ не найдена, извлекаем информацию из TSL.xml")
+        return self.extract_ca_info_from_tsl()
+    
+    def extract_ca_info_from_tsl(self):
+        """Извлечение информации об УЦ из TSL.xml"""
         try:
-            # Создаем копию состояния для сохранения, чтобы не модифицировать оригинал
-            state_to_save = {}
-            for k, v in self.state.items():
-                state_to_save[k] = v.copy() if isinstance(v, dict) else v
-            with open(STATE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(state_to_save, f, ensure_ascii=False, indent=2, default=str)
+            import requests
+            import xml.etree.ElementTree as ET
+            import re
+            
+            TSL_URL = "https://e-trust.gosuslugi.ru/app/scc/portal/api/v1/portal/ca/getxml"
+            
+            # Загружаем TSL.xml
+            response = requests.get(TSL_URL, timeout=30, verify=VERIFY_TLS)
+            response.raise_for_status()
+            xml_content = response.content
+            
+            if isinstance(xml_content, bytes):
+                xml_content = xml_content.decode('utf-8')
+            
+            root = ET.fromstring(xml_content)
+            url_to_ca_map = {}
+            
+            # Подготавливаем фильтры
+            ogrn_filters = None
+            numeric_filters = None
+            if TSL_OGRN_LIST:
+                ogrn_filters = [re.sub(r'\D', '', n) for n in TSL_OGRN_LIST if n]
+                ogrn_filters = [n for n in ogrn_filters if n]
+            elif TSL_REGISTRY_NUMBERS:
+                numeric_filters = [re.sub(r'\D', '', n) for n in TSL_REGISTRY_NUMBERS if n]
+                numeric_filters = [n for n in numeric_filters if n]
+            
+            for ca_element in root.findall('.//УдостоверяющийЦентр'):
+                status_element = ca_element.find('.//Статус')
+                if status_element is not None and status_element.text == 'Действует':
+                    reg_number_element = ca_element.find('.//РеестровыйНомер')
+                    name_element = ca_element.find('.//Название')
+                    
+                    # Применяем фильтры
+                    if ogrn_filters is not None:
+                        ogrn_element = ca_element.find('.//ОГРН')
+                        ogrn_val = ogrn_element.text.strip() if (ogrn_element is not None and ogrn_element.text) else None
+                        if not ogrn_val:
+                            continue
+                        ogrn_digits = re.sub(r'\D', '', ogrn_val)
+                        if ogrn_digits not in ogrn_filters:
+                            continue
+                    elif numeric_filters is not None:
+                        reg_val = reg_number_element.text.strip() if (reg_number_element is not None and reg_number_element.text) else None
+                        if not reg_val:
+                            continue
+                        reg_digits = re.sub(r'\D', '', reg_val)
+                        if not any(reg_digits.startswith(flt) for flt in numeric_filters):
+                            continue
+                    
+                    # Извлекаем CRL URL и создаем карту
+                    for crl_addr in ca_element.findall('.//АдресаСписковОтзыва/Адрес'):
+                        if crl_addr.text:
+                            url = crl_addr.text.strip()
+                            if url:
+                                ca_name = name_element.text.strip() if name_element is not None and name_element.text else 'Неизвестный УЦ'
+                                reg_number = reg_number_element.text.strip() if reg_number_element is not None and reg_number_element.text else 'Неизвестный номер'
+                                url_to_ca_map[url] = {
+                                    'name': ca_name,
+                                    'reg_number': reg_number
+                                }
+            
+            logger.info(f"Извлечена информация об УЦ из TSL.xml: {len(url_to_ca_map)} URL")
+            return url_to_ca_map
         except Exception as e:
-            logger.error(f"Ошибка сохранения состояния: {e}")
+            logger.error(f"Ошибка извлечения информации об УЦ из TSL.xml: {e}")
+            return {}
+
+    def save_state(self):
+        """Сохранение состояния: сначала в БД, затем в файл (fallback)."""
+        if DB_ENABLED:
+            try:
+                from db import crl_state_upsert
+                for k, v in self.state.items():
+                    crl_state_upsert(k, v)
+                return
+            except Exception as e:
+                logger.error(f"Ошибка сохранения состояния в БД: {e}")
+        try:
+            with open(STATE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.state, f, ensure_ascii=False, indent=2, default=str)
+        except Exception as e:
+            logger.error(f"Ошибка сохранения состояния в файл: {e}")
 
     def load_weekly_stats(self):
-        """Загрузка недельной статистики"""
+        """Загрузка недельной статистики: БД или файл (fallback)."""
+        if DB_ENABLED:
+            try:
+                from db import weekly_stats_get_all
+                return weekly_stats_get_all()
+            except Exception as e:
+                logger.error(f"Ошибка загрузки статистики из БД: {e}")
         if os.path.exists(STATS_FILE):
             try:
                 with open(STATS_FILE, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except Exception as e:
-                logger.error(f"Ошибка загрузки статистики: {e}")
+                logger.error(f"Ошибка загрузки статистики из файла: {e}")
         return {}
 
     def save_weekly_stats(self):
-        """Сохранение недельной статистики"""
+        """Сохранение недельной статистики: БД или файл (fallback)."""
+        if DB_ENABLED:
+            try:
+                from db import weekly_stats_set
+                for category, count in self.weekly_stats.items():
+                    weekly_stats_set(category, int(count))
+                return
+            except Exception as e:
+                logger.error(f"Ошибка сохранения статистики в БД: {e}")
         try:
             with open(STATS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.weekly_stats, f, ensure_ascii=False, indent=2, default=str)
         except Exception as e:
-            logger.error(f"Ошибка сохранения статистики: {e}")
+            logger.error(f"Ошибка сохранения статистики в файл: {e}")
 
     def load_logged_empty_crls(self):
         """Загружает список уже залогированных пустых CRL"""
@@ -243,6 +332,9 @@ class CRLMonitor:
             
             # Сохранение состояния после полного цикла проверок
             self.save_state()
+            # Сбрасываем холодный старт после первого полного цикла
+            if self.cold_start:
+                self.cold_start = False
             logger.info("Проверка CRL завершена.")
 
         except Exception as e:
@@ -331,7 +423,12 @@ class CRLMonitor:
                     continue
 
                 # 6. Обработка, обновление состояния и отправка уведомлений
-                self.handle_crl_info(filename, crl_info, url)
+                size_mb = None
+                try:
+                    size_mb = len(crl_data) / (1024 * 1024)
+                except Exception:
+                    size_mb = None
+                self.handle_crl_info(filename, crl_info, url, size_mb=size_mb)
                 
                 crl_processed = True
                 self.metric_processed_total.labels(result='success').inc()
@@ -389,20 +486,39 @@ class CRLMonitor:
         
         return False
 
-    def handle_crl_info(self, filename, crl_info, url):
+    def handle_crl_info(self, filename, crl_info, url, size_mb=None):
         """Обрабатывает извлеченную информацию о CRL: проверяет, обновляет состояние, отправляет уведомления."""
         # Нормализация дат
         this_update = ensure_moscow_tz(crl_info.get('this_update'))
         next_update = ensure_moscow_tz(crl_info.get('next_update'))
         
-        # Проверка на истечение срока и отправка алертов
-        self.check_crl_expiration(filename, next_update, url)
+        # Получение информации об УЦ (с попыткой из БД при отсутствии в карте) — ДО отправки любых уведомлений
+        ca_info = self.url_to_ca_map.get(url)
+        if not ca_info:
+            try:
+                from db import get_ca_by_crl_url
+                db_info = get_ca_by_crl_url(url)
+                if db_info:
+                    ca_info = db_info
+            except Exception as e:
+                logger.error(f"Ошибка получения информации об УЦ из БД: {e}")
+        ca_name = (ca_info or {}).get('name', 'Неизвестный УЦ')
+        ca_reg_number = (ca_info or {}).get('reg_number', 'Неизвестный номер')
 
-        # Проверка на новую версию и прирост
-        self.check_for_new_version(filename, crl_info, url)
+        # Проверка на истечение срока и отправка алертов (с передачей данных об УЦ)
+        self.check_crl_expiration(filename, next_update, url, size_mb=size_mb, ca_name=ca_name, ca_reg_number=ca_reg_number)
+
+        # Проверка на новую версию и прирост (с передачей данных об УЦ)
+        self.check_for_new_version(filename, crl_info, url, size_mb=size_mb, ca_name=ca_name, ca_reg_number=ca_reg_number)
 
         # Обновление состояния
         now_msk = datetime.now(MOSCOW_TZ)
+        # Снимок категорий на текущий момент для корректных дельт в будущем
+        try:
+            current_categories_snapshot = self.categorize_revoked_certificates(crl_info.get('revoked_certificates', []))
+        except Exception:
+            current_categories_snapshot = {}
+
         self.state[filename] = {
             'last_check': now_msk.isoformat(),
             'this_update': this_update.isoformat() if this_update else None,
@@ -410,10 +526,137 @@ class CRLMonitor:
             'revoked_count': crl_info['revoked_count'],
             'crl_number': crl_info.get('crl_number'),
             'last_alerts': self.state.get(filename, {}).get('last_alerts', {}),
-            'url': url
+            'url': url,
+            'ca_name': ca_name,
+            'ca_reg_number': ca_reg_number,
+            'categories': current_categories_snapshot
         }
 
-    def check_crl_expiration(self, crl_name, next_update_dt, crl_url):
+    def check_for_new_version(self, crl_name, crl_info, url, size_mb=None, ca_name=None, ca_reg_number=None):
+        """Проверяет, является ли CRL новой версией, и отправляет уведомление."""
+        prev_info = self.state.get(crl_name, {})
+        prev_crl_number = prev_info.get('crl_number')
+        current_crl_number = crl_info.get('crl_number')
+
+        # Нормализация номеров CRL (в БД crl_number хранится как TEXT)
+        def normalize_number(value):
+            if value is None:
+                return None, None
+            # если уже int
+            if isinstance(value, int):
+                return value, 'int'
+            # пробуем привести строку к int по цифрам
+            try:
+                s = str(value)
+                import re
+                digits = re.sub(r'\D', '', s)
+                if digits:
+                    return int(digits), 'int'
+                return s.strip().lower(), 'str'
+            except Exception:
+                try:
+                    return int(value), 'int'
+                except Exception:
+                    return str(value).strip().lower(), 'str'
+
+        prev_norm, prev_kind = normalize_number(prev_crl_number)
+        curr_norm, curr_kind = normalize_number(current_crl_number)
+
+        if prev_norm is None and curr_norm is not None:
+            is_new_version = True
+        elif prev_norm is not None and curr_norm is not None:
+            if prev_kind == 'int' and curr_kind == 'int':
+                is_new_version = curr_norm > prev_norm
+            else:
+                # Строковое сравнение как fallback
+                is_new_version = str(curr_norm) > str(prev_norm)
+        else:
+            is_new_version = False
+        is_first_time = crl_name not in self.state
+
+        # ЕДИНЫЕ ПРАВИЛА:
+        # - Новая версия: уведомляем всегда
+        # - Первое появление после рестарта:
+        #   считаем «не новым», если в БД уже есть crl_name и crl_number совпадает → не уведомляем
+        if is_first_time and prev_info and current_crl_number is not None and prev_crl_number is not None:
+            # Нормализованные значения уже рассчитаны выше
+            if curr_norm == prev_norm:
+                return
+
+        if is_new_version or is_first_time:
+            previous_count = prev_info.get('revoked_count', 0)
+            current_count = crl_info['revoked_count']
+            increase = current_count - previous_count
+
+            # Нормализуем даты отзывов для категорий
+            for cert in crl_info.get('revoked_certificates', []):
+                if 'revocation_date' in cert and cert['revocation_date']:
+                    cert['revocation_date'] = ensure_moscow_tz(cert['revocation_date'])
+            categories = self.categorize_revoked_certificates(crl_info.get('revoked_certificates', []))
+
+            # Дельты по причинам: считаем прирост относительно предыдущего снимка, отрицательные игнорируем (RFC: истекшие удаляются из CRL)
+            prev_categories = prev_info.get('categories', {}) or {}
+            delta_categories = {}
+            try:
+                for reason, curr_val in categories.items():
+                    prev_val = int(prev_categories.get(reason, 0)) if prev_categories.get(reason, 0) is not None else 0
+                    delta = int(curr_val) - prev_val
+                    if delta > 0:
+                        delta_categories[reason] = delta
+                # Если появились новые причины — они попадут как положительные дельты; исчезнувшие игнорируем
+            except Exception:
+                # На всякий случай fallback к полным категориям
+                delta_categories = categories
+
+            # Если УЦ не передан, попробуем достать из state (на случай первого прохода)
+            if not ca_name or not ca_reg_number:
+                crl_state = self.state.get(crl_name, {})
+                ca_name = ca_name or crl_state.get('ca_name', 'Неизвестный УЦ')
+                ca_reg_number = ca_reg_number or crl_state.get('ca_reg_number', 'Неизвестный номер')
+
+            self.notifier.send_new_crl_info(
+                crl_name,
+                current_count,
+                increase,
+                categories,
+                ensure_moscow_tz(crl_info['this_update']),
+                current_crl_number,
+                url,
+                current_count,
+                ensure_moscow_tz(crl_info['next_update']),
+                size_mb=size_mb,
+                ca_name=ca_name,
+                ca_reg_number=ca_reg_number
+            )
+
+            # Обновляем недельную статистику по дельтам
+            # Обновляем агрегат и детальную статистику
+            week_start = datetime.now(MOSCOW_TZ)
+            # нормализуем к понедельнику 00:00 МСК
+            week_start = week_start - timedelta(days=week_start.weekday())
+            week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+            for category, count in delta_categories.items():
+                self.weekly_stats[category] = self.weekly_stats.get(category, 0) + count
+            # детальные строки
+            detail_rows = [
+                (
+                    week_start.isoformat(),
+                    ca_name,
+                    ca_reg_number,
+                    crl_name,
+                    url,
+                    category,
+                    int(count),
+                )
+                for category, count in delta_categories.items()
+            ]
+            try:
+                weekly_details_bulk_upsert(detail_rows)
+            except Exception as e:
+                logger.error(f"Ошибка записи детальной недельной статистики: {e}")
+            self.save_weekly_stats()
+
+    def check_crl_expiration(self, crl_name, next_update_dt, crl_url, size_mb=None, ca_name=None, ca_reg_number=None):
         """Проверяет, истек ли срок действия CRL, и отправляет уведомление, если нужно."""
         if not next_update_dt:
             logger.debug(f"CRL {crl_name} не содержит даты следующего обновления (nextUpdate). Проверка истечения пропущена.")
@@ -434,16 +677,14 @@ class CRLMonitor:
         # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
 
         if time_diff.total_seconds() <= 0:
-            # CRL истек. Проверяем, не истек ли он слишком давно (уже проверили выше).
-            # Отправляем уведомление об истечении.
-            self.notifier.send_expired_crl_alert(crl_name, next_update_dt, crl_url)
-            logger.info(f"Отправлен алерт: CRL '{crl_name}' истек ({next_update_dt}).")
-            
-            # Сохраняем время отправки алерта об истечении, чтобы избежать повторных уведомлений
-            # Используем ключ 'alert_expired' для алерта об истечении
+            # CRL истек. Не отправляем повторно, если уже отправляли ранее
             alert_key = 'alert_expired'
-            self.state.setdefault(crl_name, {}).setdefault('last_alerts', {})[alert_key] = now_msk.isoformat()
-            self.save_state()
+            last_alerted = self.state.get(crl_name, {}).get('last_alerts', {}).get(alert_key)
+            if not last_alerted:
+                self.notifier.send_expired_crl_alert(crl_name, next_update_dt, crl_url, size_mb=size_mb, ca_name=ca_name, ca_reg_number=ca_reg_number)
+                logger.info(f"Отправлен алерт: CRL '{crl_name}' истек ({next_update_dt}).")
+                self.state.setdefault(crl_name, {}).setdefault('last_alerts', {})[alert_key] = now_msk.isoformat()
+                self.save_state()
             
         else: # CRL еще не истек, проверяем пороги "скоро истечет"
             # Проверка порогов "скоро истекает"
@@ -459,17 +700,12 @@ class CRLMonitor:
                     last_alert_dt = self._parse_datetime_with_tz(last_alert_str)
 
                     # Проверяем, нужно ли отправлять алерт (если он еще не отправлялся или прошло достаточно времени)
-                    should_send_alert = True
-                    if last_alert_dt:
-                        # Предотвращение повторной отправки в течение короткого времени
-                        # Например, если алерт уже был отправлен менее 0.5 часа (30 минут) назад для этого порога
-                        time_since_last_alert = now_msk - last_alert_dt
-                        if time_since_last_alert.total_seconds() < 1800: # 30 минут в секундах
-                            should_send_alert = False
+                    # Не отправляем повторно этот же порог, если уже отправляли ранее
+                    should_send_alert = last_alert_dt is None
                             
                     if should_send_alert:
-                        # ИСПРАВЛЕНО: Правильный порядок аргументов: crl_name, time_left_hours, next_update_dt, crl_url
-                        self.notifier.send_expiring_crl_alert(crl_name, time_left_hours, next_update_dt, crl_url)
+                        # ИСПРАВЛЕНО: передаём данные об УЦ, полученные в handle_crl_info
+                        self.notifier.send_expiring_crl_alert(crl_name, time_left_hours, next_update_dt, crl_url, size_mb=size_mb, ca_name=ca_name, ca_reg_number=ca_reg_number)
                         logger.info(f"Отправлен алерт: CRL '{crl_name}' истекает через {time_left_hours:.2f} часов (порог {threshold}h).")
                         # Сохраняем время отправки алерта
                         self.state.setdefault(crl_name, {}).setdefault('last_alerts', {})[alert_key] = now_msk.isoformat()
@@ -480,45 +716,7 @@ class CRLMonitor:
             # if not alert_sent and time_left_hours > ALERT_THRESHOLDS[-1]:
             #     logger.debug(f"CRL '{crl_name}' в порядке. До истечения более {ALERT_THRESHOLDS[-1]} часов.")
 
-    def check_for_new_version(self, crl_name, crl_info, url):
-        """Проверяет, является ли CRL новой версией, и отправляет уведомление."""
-        prev_info = self.state.get(crl_name, {})
-        prev_crl_number = prev_info.get('crl_number')
-        current_crl_number = crl_info.get('crl_number')
-
-        is_new_version = (
-            (prev_crl_number is None and current_crl_number is not None) or
-            (prev_crl_number is not None and current_crl_number is not None and current_crl_number > prev_crl_number)
-        )
-        is_first_time = crl_name not in self.state
-
-        if is_new_version or is_first_time:
-            previous_count = prev_info.get('revoked_count', 0)
-            current_count = crl_info['revoked_count']
-            increase = current_count - previous_count
-
-            # Категоризация отозванных сертификатов
-            for cert in crl_info.get('revoked_certificates', []):
-                if 'revocation_date' in cert and cert['revocation_date']:
-                    cert['revocation_date'] = ensure_moscow_tz(cert['revocation_date'])
-            categories = self.categorize_revoked_certificates(crl_info.get('revoked_certificates', []))
-
-            self.notifier.send_new_crl_info(
-                crl_name,
-                current_count,
-                increase,
-                categories,
-                ensure_moscow_tz(crl_info['this_update']),
-                current_crl_number,
-                url,
-                current_count,
-                ensure_moscow_tz(crl_info['next_update'])
-            )
-
-            # Обновление недельной статистики
-            for category, count in categories.items():
-                self.weekly_stats[category] = self.weekly_stats.get(category, 0) + count
-            self.save_weekly_stats()
+    
 
     def categorize_revoked_certificates(self, revoked_certs):
         """Категоризация отозванных сертификатов по причине (регистронезависимая, устойчивая к формату)"""
@@ -592,6 +790,12 @@ class CRLMonitor:
     def check_missed_crl(self):
         """Проверка неопубликованных CRL"""
         now_msk = datetime.now(MOSCOW_TZ)
+        # Ограничиваем проверку только текущим набором URL после всех фильтров (TSL/ФНС)
+        try:
+            current_allowed_urls = set(self.get_all_crl_urls())
+        except Exception as e:
+            logger.error(f"Не удалось получить текущий список CRL URL для фильтрации пропущенных: {e}")
+            current_allowed_urls = None
         for crl_name, crl_state in self.state.items():
             # --- НОВАЯ ЛОГИКА ФИЛЬТРАЦИИ ---
             # Получаем URL из состояния для проверки принадлежности к ФНС
@@ -603,6 +807,10 @@ class CRLMonitor:
                     # URL не принадлежит ФНС, пропускаем проверку в режиме FNS_ONLY
                     logger.debug(f"Пропущена проверка неопубликованного CRL '{crl_name}' ({crl_url}) в режиме FNS_ONLY.")
                     continue
+            # Доп. фильтр: если текущий список разрешённых URL получен, то проверяем принадлежность
+            if current_allowed_urls is not None and crl_url and crl_url not in current_allowed_urls:
+                logger.debug(f"Пропущена проверка неопубликованного CRL '{crl_name}' ({crl_url}) — не входит в текущий фильтр URL.")
+                continue
             # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
             next_update_str = crl_state.get('next_update')
             # crl_url уже получен выше
@@ -624,9 +832,11 @@ class CRLMonitor:
                     if time_left.total_seconds() < -3600: # Если прошло больше часа после ожидаемого обновления
                         # Проверяем, не было ли уже уведомления об этом пропуске
                         last_missed_alert = crl_state.get('last_alerts', {}).get('missed')
-                        if not last_missed_alert or (now_msk - self._parse_datetime_with_tz(last_missed_alert)).total_seconds() > 86400: # 24 часа
+                        if not last_missed_alert:
                             # Передаем crl_url в уведомление
-                            self.notifier.send_missed_crl_alert(crl_name, next_update_dt, crl_url)
+                            ca_name = crl_state.get('ca_name', 'Неизвестный УЦ')
+                            ca_reg_number = crl_state.get('ca_reg_number', 'Неизвестный номер')
+                            self.notifier.send_missed_crl_alert(crl_name, next_update_dt, crl_url, ca_name=ca_name, ca_reg_number=ca_reg_number)
                             if 'last_alerts' not in crl_state:
                                 crl_state['last_alerts'] = {}
                             crl_state['last_alerts']['missed'] = now_msk.isoformat()
@@ -635,10 +845,57 @@ class CRLMonitor:
             # else: next_update_str отсутствует, пропускаем проверку для этой записи
             
     def send_weekly_stats(self):
-        """Отправка недельной статистики"""
-        if self.weekly_stats:
+        """Финализация недели: отправка агрегата и выгрузка CSV/JSON по УЦ/CRL"""
+        if not self.weekly_stats:
+            return
+        # Отправляем агрегат в Telegram
             self.notifier.send_weekly_stats(self.weekly_stats)
-            # Сброс статистики
+        # Выгружаем детальные данные из БД в CSV/JSON
+        try:
+            import csv, os, json, sqlite3
+            week_start = datetime.now(MOSCOW_TZ)
+            week_start = week_start - timedelta(days=week_start.weekday())
+            week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+            week_dir = os.path.join(DATA_DIR, 'stats', week_start.strftime('%Y-%m-%d'))
+            os.makedirs(week_dir, exist_ok=True)
+            db_path = os.path.join(DATA_DIR, 'crlchecker.db')
+            rows = []
+            with sqlite3.connect(db_path) as conn:
+                cur = conn.execute(
+                    "SELECT week_start, ca_name, ca_reg_number, crl_name, crl_url, reason, count FROM weekly_details WHERE week_start=?",
+                    (week_start.isoformat(),)
+                )
+                rows = cur.fetchall()
+            # CSV недельный
+            csv_week = os.path.join(week_dir, 'weekly_stats.csv')
+            with open(csv_week, 'w', newline='', encoding='utf-8') as f:
+                w = csv.writer(f)
+                w.writerow(['week_start','ca_name','ca_reg_number','crl_name','crl_url','reason','count'])
+                for r in rows:
+                    w.writerow(r)
+            # JSON недельный
+            json_week = os.path.join(week_dir, 'weekly_stats.json')
+            with open(json_week, 'w', encoding='utf-8') as f:
+                json.dump([
+                    {
+                        'week_start': r[0], 'ca_name': r[1], 'ca_reg_number': r[2],
+                        'crl_name': r[3], 'crl_url': r[4], 'reason': r[5], 'count': r[6]
+                    } for r in rows
+                ], f, ensure_ascii=False, indent=2)
+            # Единый all-time CSV
+            all_csv_dir = os.path.join(DATA_DIR, 'stats')
+            os.makedirs(all_csv_dir, exist_ok=True)
+            all_csv = os.path.join(all_csv_dir, 'maintained.csv')
+            new_file = not os.path.exists(all_csv)
+            with open(all_csv, 'a', newline='', encoding='utf-8') as f:
+                w = csv.writer(f)
+                if new_file:
+                    w.writerow(['week_start','ca_name','ca_reg_number','crl_name','crl_url','reason','count'])
+                for r in rows:
+                    w.writerow(r)
+        except Exception as e:
+            logger.error(f"Ошибка выгрузки недельной статистики: {e}")
+        # Сброс агрегата
             self.weekly_stats = {}
             self.save_weekly_stats()
 
@@ -684,7 +941,18 @@ class CRLMonitor:
                     continue
 
                 # 5. Обработка, обновление состояния и отправка уведомлений
-                self.handle_crl_info(filename, crl_info, url)
+                size_mb = None
+                try:
+                    size_mb = len(crl_data) / (1024 * 1024)
+                except Exception:
+                    size_mb = None
+                # Логируем размер CRL (если включено)
+                if size_mb is not None and SHOW_CRL_SIZE_MB:
+                    try:
+                        logger.info(f"Размер CRL '{filename}': {size_mb:.2f} МБ ({url})")
+                    except Exception:
+                        pass
+                self.handle_crl_info(filename, crl_info, url, size_mb=size_mb)
                 
                 crl_processed = True
                 logger.info(f"Успешно обработан CRL '{filename}' с {url}")
@@ -699,69 +967,7 @@ class CRLMonitor:
             error_msg = f"Не удалось обработать CRL '{filename}' ни с одного из {len(urls)} URL. Последняя ошибка: {last_error}"
             logger.error(error_msg)
 
-    def handle_crl_info(self, filename, crl_info, url):
-        """Обрабатывает извлеченную информацию о CRL: проверяет, обновляет состояние, отправляет уведомления."""
-        # Нормализация дат
-        this_update = ensure_moscow_tz(crl_info.get('this_update'))
-        next_update = ensure_moscow_tz(crl_info.get('next_update'))
-        
-        # Проверка на истечение срока и отправка алертов
-        self.check_crl_expiration(filename, next_update, url)
-
-        # Проверка на новую версию и прирост
-        self.check_for_new_version(filename, crl_info, url)
-
-        # Обновление состояния
-        now_msk = datetime.now(MOSCOW_TZ)
-        self.state[filename] = {
-            'last_check': now_msk.isoformat(),
-            'this_update': this_update.isoformat() if this_update else None,
-            'next_update': next_update.isoformat() if next_update else None,
-            'revoked_count': crl_info['revoked_count'],
-            'crl_number': crl_info.get('crl_number'),
-            'last_alerts': self.state.get(filename, {}).get('last_alerts', {}),
-            'url': url
-        }
-
-    def check_for_new_version(self, crl_name, crl_info, url):
-        """Проверяет, является ли CRL новой версией, и отправляет уведомление."""
-        prev_info = self.state.get(crl_name, {})
-        prev_crl_number = prev_info.get('crl_number')
-        current_crl_number = crl_info.get('crl_number')
-
-        is_new_version = (
-            (prev_crl_number is None and current_crl_number is not None) or
-            (prev_crl_number is not None and current_crl_number is not None and current_crl_number > prev_crl_number)
-        )
-        is_first_time = crl_name not in self.state
-
-        if is_new_version or is_first_time:
-            previous_count = prev_info.get('revoked_count', 0)
-            current_count = crl_info['revoked_count']
-            increase = current_count - previous_count
-
-            # Категоризация отозванных сертификатов
-            for cert in crl_info.get('revoked_certificates', []):
-                if 'revocation_date' in cert and cert['revocation_date']:
-                    cert['revocation_date'] = ensure_moscow_tz(cert['revocation_date'])
-            categories = self.categorize_revoked_certificates(crl_info.get('revoked_certificates', []))
-
-            self.notifier.send_new_crl_info(
-                crl_name,
-                current_count,
-                increase,
-                categories,
-                ensure_moscow_tz(crl_info['this_update']),
-                current_crl_number,
-                url,
-                current_count,
-                ensure_moscow_tz(crl_info['next_update'])
-            )
-
-            # Обновление недельной статистики
-            for category, count in categories.items():
-                self.weekly_stats[category] = self.weekly_stats.get(category, 0) + count
-            self.save_weekly_stats()
+    
 
     def setup_schedule(self):
         """Настройка расписания"""

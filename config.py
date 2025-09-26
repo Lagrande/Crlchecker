@@ -22,7 +22,7 @@ NOTIFY_WEEKLY_STATS = os.getenv('NOTIFY_WEEKLY_STATS', 'true').lower() == 'true'
 # Список CDP источников
 CDP_SOURCES = [
     # 'http://pki.tax.gov.ru/cdp/',
-     'http://cdp.tax.gov.ru/cdp/',
+    #  'http://cdp.tax.gov.ru/cdp/',
     # Добавьте новые источники здесь
 ]
 
@@ -33,9 +33,9 @@ KNOWN_CRL_PATHS = [
     # 'gucrl.crl',
     # 'tcs.crl',
     # 'ca.crl',
-    'guc_gost12.crl',
-    'guc2021.crl',
-    'guc2022.crl'
+    # 'guc_gost12.crl',
+    # 'guc2021.crl',
+    # 'guc2022.crl'
 ]
 
 # Пороговые значения для уведомлений (в часах)
@@ -78,3 +78,45 @@ AVAILABILITY_TIMEOUT = 10
 # Проверка TLS-сертификатов при HTTP-запросах (GET/HEAD)
 # Можно отключить в средах с нестандартными цепочками: VERIFY_TLS=false
 VERIFY_TLS = os.getenv('VERIFY_TLS', 'true').lower() == 'true'
+
+# --- Доп. опции ---
+# Опциональный вывод размера CRL в МБ в уведомлениях
+SHOW_CRL_SIZE_MB = os.getenv('SHOW_CRL_SIZE_MB', 'false').lower() == 'true'
+
+# Фильтр по списку реестровых номеров TSL (через запятую). Если пусто — без фильтра
+_TSL_REGISTRY_NUMBERS_RAW = os.getenv('TSL_REGISTRY_NUMBERS', '')
+TSL_REGISTRY_NUMBERS = set(
+    num.strip() for num in _TSL_REGISTRY_NUMBERS_RAW.split(',') if num.strip()
+)
+
+# Фильтр по списку ОГРН (через запятую). Если не пусто — фильтрация по ОГРН имеет приоритет над реестровым номером
+_TSL_OGRN_LIST_RAW = os.getenv('TSL_OGRN_LIST', '')
+TSL_OGRN_LIST = set(
+    num.strip() for num in _TSL_OGRN_LIST_RAW.split(',') if num.strip()
+)
+
+# --- База данных ---
+# Путь к SQLite базе данных
+DB_PATH = os.getenv('DB_PATH', os.path.join(DATA_DIR, 'crlchecker.db'))
+DB_ENABLED = os.getenv('DB_ENABLED', 'true').lower() == 'true'
+
+# --- Доп. опции ---
+# Опциональный вывод размера CRL в МБ в уведомлениях
+SHOW_CRL_SIZE_MB = os.getenv('SHOW_CRL_SIZE_MB', 'false').lower() == 'true'
+
+# Фильтр по списку реестровых номеров TSL (через запятую). Если пусто — без фильтра
+_TSL_REGISTRY_NUMBERS_RAW = os.getenv('TSL_REGISTRY_NUMBERS', '')
+TSL_REGISTRY_NUMBERS = set(
+    num.strip() for num in _TSL_REGISTRY_NUMBERS_RAW.split(',') if num.strip()
+)
+
+# Фильтр по списку ОГРН (через запятую). Если не пусто — фильтрация по ОГРН имеет приоритет над реестровым номером
+_TSL_OGRN_LIST_RAW = os.getenv('TSL_OGRN_LIST', '')
+TSL_OGRN_LIST = set(
+    num.strip() for num in _TSL_OGRN_LIST_RAW.split(',') if num.strip()
+)
+
+# --- База данных ---
+# Путь к SQLite базе данных
+DB_PATH = os.getenv('DB_PATH', os.path.join(DATA_DIR, 'crlchecker.db'))
+DB_ENABLED = os.getenv('DB_ENABLED', 'true').lower() == 'true'

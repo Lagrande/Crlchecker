@@ -2,6 +2,7 @@
 import threading
 import time
 import logging
+from db import init_db
 from crl_monitor import CRLMonitor
 from tsl_monitor import TSLMonitor
 
@@ -20,6 +21,12 @@ if __name__ == "__main__":
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
+    # Инициализация БД перед запуском потоков (идемпотентно)
+    try:
+        init_db()
+    except Exception as e:
+        logging.error(f"DB init failed in run_all_monitors: {e}")
+
     # Создаем потоки для каждого монитора
     crl_thread = threading.Thread(target=run_crl_monitor, name="CRLMonitorThread")
     tsl_thread = threading.Thread(target=run_tsl_monitor, name="TSLMonitorThread")

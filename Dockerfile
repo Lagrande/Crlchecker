@@ -3,7 +3,7 @@ FROM python:3.9-slim
 
 # --- НАЧАЛО: Установка сертификата ---
 # Устанавливаем необходимые утилиты для работы с сертификатами
-RUN apt-get update && apt-get install -y curl wget openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl wget sqlite3 jq openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # Создаем директорию для локальных сертификатов (если еще не существует)
 RUN mkdir -p /usr/local/share/ca-certificates/extra
