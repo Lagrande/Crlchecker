@@ -17,6 +17,11 @@ class TelegramNotifier:
 
     def send_message(self, message):
         """Отправка сообщения в Telegram с обработкой 429"""
+        # Проверяем режим Dry-run
+        if DRY_RUN:
+            logger.info(f"[DRY-RUN] Уведомление НЕ отправлено в Telegram: {message[:100]}...")
+            return
+            
         if not self.bot_token or not self.chat_id:
             logger.warning("Токен бота или ID чата не заданы. Уведомление не отправлено.")
             return

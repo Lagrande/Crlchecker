@@ -46,6 +46,13 @@ class TSLMonitor:
     def __init__(self):
         self.notifier = TelegramNotifier()
         self.state = self.load_state()
+        
+        # Логируем режим работы
+        if DRY_RUN:
+            logger.info("🔍 TSL Monitor запущен в режиме DRY-RUN - уведомления НЕ будут отправляться в Telegram")
+        else:
+            logger.info("📱 TSL Monitor запущен в обычном режиме - уведомления будут отправляться в Telegram")
+            
         # Метрики
         self.metric_tsl_checks_total = Counter('tsl_checks_total', 'Total TSL check runs', registry=MetricsRegistry.registry)
         self.metric_tsl_fetch_status = Counter('tsl_fetch_total', 'TSL fetch attempts', ['result'], registry=MetricsRegistry.registry)

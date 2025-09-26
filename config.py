@@ -7,6 +7,9 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'YOUR_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID')
 
 # --- Настройки уведомлений ---
+# Режим Dry-run (без отправки уведомлений в Telegram)
+DRY_RUN = os.getenv('DRY_RUN', 'false').lower() == 'true'
+
 # Включение/отключение различных типов уведомлений
 NOTIFY_NEW_CAS = os.getenv('NOTIFY_NEW_CAS', 'true').lower() == 'true'  # Новые УЦ
 NOTIFY_REMOVED_CAS = os.getenv('NOTIFY_REMOVED_CAS', 'true').lower() == 'true'  # Удаленные УЦ

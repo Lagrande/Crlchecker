@@ -49,6 +49,12 @@ class CRLMonitor:
         self.logged_empty_crls = self.load_logged_empty_crls()
         # Флаг холодного старта: чтобы не слать все CRL как «новые» после рестарта
         self.cold_start = True
+        
+        # Логируем режим работы
+        if DRY_RUN:
+            logger.info("🔍 CRL Monitor запущен в режиме DRY-RUN - уведомления НЕ будут отправляться в Telegram")
+        else:
+            logger.info("📱 CRL Monitor запущен в обычном режиме - уведомления будут отправляться в Telegram")
         # Метрики - используем общий реестр
         self.metric_checks_total = Counter('crl_checks_total', 'Total CRL check runs', registry=MetricsRegistry.registry)
         self.metric_processed_total = Counter('crl_processed_total', 'Processed CRL files', ['result'], registry=MetricsRegistry.registry)

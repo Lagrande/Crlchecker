@@ -27,6 +27,7 @@ CRLChecker — система мониторинга списков отозва
 - `SHOW_CRL_SIZE_MB`: `true|false` — показывать размер CRL в МБ в уведомлениях (по умолчанию `false`)
 - `DB_ENABLED`: `true|false` — использовать SQLite базу данных для хранения состояния (по умолчанию `true`)
 - `DB_PATH`: путь к файлу SQLite базы данных (по умолчанию `/app/data/crlchecker.db`)
+- `DRY_RUN`: `true|false` — режим Dry-run без отправки уведомлений в Telegram (по умолчанию `false`)
 
 Фильтрация TSL по УЦ:
 - `TSL_OGRN_LIST`: список ОГРН для точного отбора УЦ из TSL (через запятую). Пример: `TSL_OGRN_LIST=1047702026701,1027700132195`
@@ -124,6 +125,7 @@ environment:
   - TELEGRAM_BOT_TOKEN=
   - TELEGRAM_CHAT_ID=
   - FNS_ONLY=true
+  - DRY_RUN=false
 
   # Уведомления TSL
   - NOTIFY_NEW_CAS=true
@@ -158,6 +160,7 @@ environment:
   - TELEGRAM_BOT_TOKEN=
   - TELEGRAM_CHAT_ID=
   - FNS_ONLY=false
+  - DRY_RUN=false
 
   # Уведомления TSL
   - NOTIFY_NEW_CAS=true
@@ -208,6 +211,7 @@ services:
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - FNS_ONLY=false
       - VERIFY_TLS=false
+      - DRY_RUN=false
       # Фильтрация TSL
       - TSL_OGRN_LIST=
       - TSL_REGISTRY_NUMBERS=
@@ -290,6 +294,7 @@ python run_all_monitors.py
 - **Новое**: Отсутствие еженедельной статистики: убедитесь, что `NOTIFY_WEEKLY_STATS=true` и папка `stats/` создана.
 - **Новое**: Дублирование уведомлений после перезапуска: проверьте, что состояние корректно сохраняется в БД.
 - **Новое**: Проблемы с фильтрацией TSL: проверьте корректность `TSL_OGRN_LIST` или `TSL_REGISTRY_NUMBERS`.
+- **Новое**: Тестирование без отправки уведомлений: установите `DRY_RUN=true` для отладки.
 
 ### Новые возможности
 
@@ -324,5 +329,11 @@ python run_all_monitors.py
 - Резервное хранение в JSON файлах
 - Защита от дублирования уведомлений после перезапуска
 - Автоматическая миграция данных при обновлении
+
+#### Режим Dry-run
+- Тестирование системы без отправки уведомлений в Telegram
+- Все уведомления логируются в консоль с префиксом `[DRY-RUN]`
+- Полезно для отладки и тестирования новых функций
+- Включается переменной окружения `DRY_RUN=true`
 
 
