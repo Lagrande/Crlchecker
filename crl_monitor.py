@@ -167,7 +167,7 @@ class CRLMonitor:
             return url_to_ca_map
         except Exception as e:
             logger.error(f"Ошибка извлечения информации об УЦ из TSL.xml: {e}")
-            return {}
+        return {}
 
     def save_state(self):
         """Сохранение состояния: сначала в БД, затем в файл (fallback)."""
@@ -175,15 +175,15 @@ class CRLMonitor:
             try:
                 from db import crl_state_upsert
                 for k, v in self.state.items():
-                    crl_state_upsert(k, v)
+                        crl_state_upsert(k, v)
                 return
             except Exception as e:
-                logger.error(f"Ошибка сохранения состояния в БД: {e}")
-        try:
-            with open(STATE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(self.state, f, ensure_ascii=False, indent=2, default=str)
-        except Exception as e:
-            logger.error(f"Ошибка сохранения состояния в файл: {e}")
+                    logger.error(f"Ошибка сохранения состояния в БД: {e}")
+            try:
+                with open(STATE_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(self.state, f, ensure_ascii=False, indent=2, default=str)
+            except Exception as e:
+                logger.error(f"Ошибка сохранения состояния в файл: {e}")
 
     def load_weekly_stats(self):
         """Загрузка недельной статистики: БД или файл (fallback)."""
@@ -529,7 +529,9 @@ class CRLMonitor:
             'url': url,
             'ca_name': ca_name,
             'ca_reg_number': ca_reg_number,
-            'categories': current_categories_snapshot
+            'categories': current_categories_snapshot,
+            'crl_fingerprint': crl_info.get('crl_fingerprint'),
+            'crl_key_identifier': crl_info.get('crl_key_identifier')
         }
 
     def check_for_new_version(self, crl_name, crl_info, url, size_mb=None, ca_name=None, ca_reg_number=None):
@@ -618,7 +620,7 @@ class CRLMonitor:
                 crl_name,
                 current_count,
                 increase,
-                categories,
+                delta_categories,  # Используем дельты вместо полных категорий
                 ensure_moscow_tz(crl_info['this_update']),
                 current_crl_number,
                 url,
@@ -626,7 +628,9 @@ class CRLMonitor:
                 ensure_moscow_tz(crl_info['next_update']),
                 size_mb=size_mb,
                 ca_name=ca_name,
-                ca_reg_number=ca_reg_number
+                ca_reg_number=ca_reg_number,
+                crl_fingerprint=crl_info.get('crl_fingerprint'),
+                crl_key_identifier=crl_info.get('crl_key_identifier')
             )
 
             # Обновляем недельную статистику по дельтам
@@ -681,10 +685,10 @@ class CRLMonitor:
             alert_key = 'alert_expired'
             last_alerted = self.state.get(crl_name, {}).get('last_alerts', {}).get(alert_key)
             if not last_alerted:
-                self.notifier.send_expired_crl_alert(crl_name, next_update_dt, crl_url, size_mb=size_mb, ca_name=ca_name, ca_reg_number=ca_reg_number)
+                self.notifier.send_expired_crl_alert(crl_name, next_update_dt, crl_url, size_mb=size_mb, ca_name=ca_name, ca_reg_number=ca_reg_number, crl_fingerprint=self.state.get(crl_name, {}).get('crl_fingerprint'), crl_key_identifier=self.state.get(crl_name, {}).get('crl_key_identifier'), crl_number=self.state.get(crl_name, {}).get('crl_number'))
                 logger.info(f"Отправлен алерт: CRL '{crl_name}' истек ({next_update_dt}).")
-                self.state.setdefault(crl_name, {}).setdefault('last_alerts', {})[alert_key] = now_msk.isoformat()
-                self.save_state()
+            self.state.setdefault(crl_name, {}).setdefault('last_alerts', {})[alert_key] = now_msk.isoformat()
+            self.save_state()
             
         else: # CRL еще не истек, проверяем пороги "скоро истечет"
             # Проверка порогов "скоро истекает"
@@ -705,7 +709,7 @@ class CRLMonitor:
                             
                     if should_send_alert:
                         # ИСПРАВЛЕНО: передаём данные об УЦ, полученные в handle_crl_info
-                        self.notifier.send_expiring_crl_alert(crl_name, time_left_hours, next_update_dt, crl_url, size_mb=size_mb, ca_name=ca_name, ca_reg_number=ca_reg_number)
+                        self.notifier.send_expiring_crl_alert(crl_name, time_left_hours, next_update_dt, crl_url, size_mb=size_mb, ca_name=ca_name, ca_reg_number=ca_reg_number, crl_fingerprint=self.state.get(crl_name, {}).get('crl_fingerprint'), crl_key_identifier=self.state.get(crl_name, {}).get('crl_key_identifier'), crl_number=self.state.get(crl_name, {}).get('crl_number'))
                         logger.info(f"Отправлен алерт: CRL '{crl_name}' истекает через {time_left_hours:.2f} часов (порог {threshold}h).")
                         # Сохраняем время отправки алерта
                         self.state.setdefault(crl_name, {}).setdefault('last_alerts', {})[alert_key] = now_msk.isoformat()

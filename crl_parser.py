@@ -203,12 +203,38 @@ class CRLParser:
         except Exception as e:
             logger.debug(f"Не удалось получить расширения CRL: {e}")
             
+        # Получение отпечатка и идентификатора ключа издателя CRL
+        crl_fingerprint = None
+        crl_key_identifier = None
+        
+        try:
+            import hashlib
+            # Получаем DER-кодированные данные CRL
+            crl_der = crl.public_bytes(encoding=x509.Encoding.DER)
+            # Вычисляем SHA-1 отпечаток CRL
+            crl_fingerprint = hashlib.sha1(crl_der).hexdigest().upper()
+        except Exception as e:
+            logger.debug(f"Не удалось получить отпечаток CRL: {e}")
+        
+        try:
+            # Получаем идентификатор ключа издателя из расширений CRL
+            extensions = crl.extensions
+            for ext in extensions:
+                if ext.oid == x509.ObjectIdentifier('2.5.29.35'):  # Authority Key Identifier
+                    key_id = ext.value.key_identifier
+                    crl_key_identifier = key_id.hex().upper()
+                    break
+        except Exception as e:
+            logger.debug(f"Не удалось получить идентификатор ключа издателя CRL: {e}")
+
         info = {
             'this_update': crl.last_update,
             'next_update': crl.next_update,
             'revoked_count': len(list(crl)),
             'crl_number': crl_number,
             'issuer': crl.issuer.rfc4514_string() if crl.issuer else None,
+            'crl_fingerprint': crl_fingerprint,
+            'crl_key_identifier': crl_key_identifier,
             'revoked_certificates': [],
             'is_delta': is_delta_crl # Добавляем флаг
         }
@@ -223,6 +249,7 @@ class CRLParser:
                     'revocation_date': revoked_cert.revocation_date,
                     'reason': None
                 }
+                
                 # Получение причины отзыва
                 try:
                     extensions = revoked_cert.extensions

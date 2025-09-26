@@ -532,4 +532,3 @@ def bulk_upsert_crl_state(state: Dict[str, Dict[str, Any]]) -> None:
         )
         conn.commit()
 
-

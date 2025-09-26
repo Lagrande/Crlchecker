@@ -249,43 +249,170 @@ class TSLMonitor:
         """Сравнение состояний и формирование отчета об изменениях"""
         changes = {
             'new_cas': [],
+            'removed_cas': [],
             'date_changes': [],
             'crl_changes': [],
-            'status_changes': []
+            'crl_url_changes': [],
+            'status_changes': [],
+            'name_changes': [],
+            'short_name_changes': [],
+            'ogrn_changes': [],
+            'inn_changes': [],
+            'email_changes': [],
+            'website_changes': [],
+            'registry_url_changes': [],
+            'address_changes': [],
+            'pak_changes': [],
+            'certificate_changes': [],
+            'other_changes': []
         }
+        # Проверяем новые УЦ
         for reg_num, ca_data in new_state.items():
             if reg_num not in old_state:
                 changes['new_cas'].append({
                     'reg_number': reg_num,
                     'name': ca_data['name'],
-                    'effective_date': ca_data['effective_date']
+                    'effective_date': ca_data['effective_date'],
+                    'ogrn': ca_data.get('ogrn'),
+                    'crl_urls': ca_data.get('crl_urls', [])
                 })
             else:
-                old_date = old_state[reg_num].get('effective_date')
-                new_date = ca_data.get('effective_date')
-                if old_date != new_date:
+                old_ca = old_state[reg_num]
+                
+                # Проверяем изменения названия
+                if old_ca.get('name') != ca_data.get('name'):
+                    changes['name_changes'].append({
+                        'reg_number': reg_num,
+                        'old_name': old_ca.get('name'),
+                        'new_name': ca_data.get('name')
+                    })
+                
+                # Проверяем изменения краткого названия
+                if old_ca.get('short_name') != ca_data.get('short_name'):
+                    changes['short_name_changes'].append({
+                        'reg_number': reg_num,
+                        'name': ca_data.get('name'),
+                        'old_short_name': old_ca.get('short_name'),
+                        'new_short_name': ca_data.get('short_name')
+                    })
+                
+                # Проверяем изменения ОГРН
+                if old_ca.get('ogrn') != ca_data.get('ogrn'):
+                    changes['ogrn_changes'].append({
+                        'reg_number': reg_num,
+                        'name': ca_data.get('name'),
+                        'old_ogrn': old_ca.get('ogrn'),
+                        'new_ogrn': ca_data.get('ogrn')
+                    })
+                
+                # Проверяем изменения ИНН
+                if old_ca.get('inn') != ca_data.get('inn'):
+                    changes['inn_changes'].append({
+                        'reg_number': reg_num,
+                        'name': ca_data.get('name'),
+                        'old_inn': old_ca.get('inn'),
+                        'new_inn': ca_data.get('inn')
+                    })
+                
+                # Проверяем изменения email
+                if old_ca.get('email') != ca_data.get('email'):
+                    changes['email_changes'].append({
+                        'reg_number': reg_num,
+                        'name': ca_data.get('name'),
+                        'old_email': old_ca.get('email'),
+                        'new_email': ca_data.get('email')
+                    })
+                
+                # Проверяем изменения веб-сайта
+                if old_ca.get('website') != ca_data.get('website'):
+                    changes['website_changes'].append({
+                        'reg_number': reg_num,
+                        'name': ca_data.get('name'),
+                        'old_website': old_ca.get('website'),
+                        'new_website': ca_data.get('website')
+                    })
+                
+                # Проверяем изменения URL реестра
+                if old_ca.get('registry_url') != ca_data.get('registry_url'):
+                    changes['registry_url_changes'].append({
+                        'reg_number': reg_num,
+                        'name': ca_data.get('name'),
+                        'old_registry_url': old_ca.get('registry_url'),
+                        'new_registry_url': ca_data.get('registry_url')
+                    })
+                
+                # Проверяем изменения адреса
+                if old_ca.get('address') != ca_data.get('address'):
+                    changes['address_changes'].append({
+                        'reg_number': reg_num,
+                        'name': ca_data.get('name'),
+                        'old_address': old_ca.get('address'),
+                        'new_address': ca_data.get('address')
+                    })
+                
+                # Проверяем изменения даты
+                if old_ca.get('effective_date') != ca_data.get('effective_date'):
                     changes['date_changes'].append({
                         'reg_number': reg_num,
-                        'name': ca_data['name'],
-                        'old_date': old_date,
-                        'new_date': new_date
+                        'name': ca_data.get('name'),
+                        'old_date': old_ca.get('effective_date'),
+                        'new_date': ca_data.get('effective_date')
                     })
-                old_crls = set(old_state[reg_num].get('crl_urls', []))
+                
+                # Проверяем изменения CRL URL
+                old_crls = set(old_ca.get('crl_urls', []))
                 new_crls = set(ca_data.get('crl_urls', []))
+                
                 added_crls = new_crls - old_crls
+                removed_crls = old_crls - new_crls
+                
                 if added_crls:
                     changes['crl_changes'].append({
                         'reg_number': reg_num,
-                        'name': ca_data['name'],
-                        'new_crls': list(added_crls)
+                        'name': ca_data.get('name'),
+                        'action': 'added',
+                        'crls': list(added_crls)
                     })
+                
+                if removed_crls:
+                    changes['crl_changes'].append({
+                        'reg_number': reg_num,
+                        'name': ca_data.get('name'),
+                        'action': 'removed',
+                        'crls': list(removed_crls)
+                    })
+                
+                # Проверяем изменения адресов CRL (если URL изменились)
+                if old_crls != new_crls and not (added_crls or removed_crls):
+                    # Это означает, что URL изменились, но количество осталось тем же
+                    changes['crl_url_changes'].append({
+                        'reg_number': reg_num,
+                        'name': ca_data.get('name'),
+                        'old_urls': list(old_crls),
+                        'new_urls': list(new_crls)
+                    })
+                
+                # Проверяем другие изменения (статус, прочие поля)
+                for field in ['status', 'revocation_date', 'certificate_chain']:
+                    if old_ca.get(field) != ca_data.get(field):
+                        changes['other_changes'].append({
+                            'reg_number': reg_num,
+                            'name': ca_data.get('name'),
+                            'field': field,
+                            'old_value': old_ca.get(field),
+                            'new_value': ca_data.get(field)
+                        })
+        
+        # Проверяем удаленные УЦ
         for reg_num, ca_data in old_state.items():
             if reg_num not in new_state:
-                changes['status_changes'].append({
+                changes['removed_cas'].append({
                     'reg_number': reg_num,
-                    'name': ca_data['name'],
+                    'name': ca_data.get('name'),
+                    'ogrn': ca_data.get('ogrn'),
                     'reason': 'Удален из списка или стал недействующим'
                 })
+        
         return changes
 
     def format_datetime_for_message(self, dt_iso_str):
@@ -306,19 +433,70 @@ class TSLMonitor:
         if no_changes:
             # Уведомления о том, что изменений нет, можно отключить
             pass
+        
         # --- Отправка уведомлений для TSL ---
         if changes['new_cas']:
             for ca in changes['new_cas']:
                 self.notifier.send_tsl_new_ca(ca)
+        
+        if changes['removed_cas']:
+            for ca in changes['removed_cas']:
+                self.notifier.send_tsl_removed_ca(ca)
+        
+        if changes['name_changes']:
+            for change in changes['name_changes']:
+                self.notifier.send_tsl_name_change(change)
+        
+        if changes['short_name_changes']:
+            for change in changes['short_name_changes']:
+                self.notifier.send_tsl_short_name_change(change)
+        
+        if changes['ogrn_changes']:
+            for change in changes['ogrn_changes']:
+                self.notifier.send_tsl_ogrn_change(change)
+        
+        if changes['inn_changes']:
+            for change in changes['inn_changes']:
+                self.notifier.send_tsl_inn_change(change)
+        
+        if changes['email_changes']:
+            for change in changes['email_changes']:
+                self.notifier.send_tsl_email_change(change)
+        
+        if changes['website_changes']:
+            for change in changes['website_changes']:
+                self.notifier.send_tsl_website_change(change)
+        
+        if changes['registry_url_changes']:
+            for change in changes['registry_url_changes']:
+                self.notifier.send_tsl_registry_url_change(change)
+        
+        if changes['address_changes']:
+            for change in changes['address_changes']:
+                self.notifier.send_tsl_address_change(change)
+        
         if changes['date_changes']:
             for change in changes['date_changes']:
                 self.notifier.send_tsl_date_change(change, change['old_date'], change['new_date'])
+        
         if changes['crl_changes']:
             for change in changes['crl_changes']:
-                self.notifier.send_tsl_crl_change(change, change['new_crls'])
+                if change['action'] == 'added':
+                    self.notifier.send_tsl_crl_added(change)
+                elif change['action'] == 'removed':
+                    self.notifier.send_tsl_crl_removed(change)
+        
+        if changes['crl_url_changes']:
+            for change in changes['crl_url_changes']:
+                self.notifier.send_tsl_crl_url_change(change)
+        
         if changes['status_changes']:
             for change in changes['status_changes']:
                 self.notifier.send_tsl_status_change(change, change['reason'])
+        
+        if changes['other_changes']:
+            for change in changes['other_changes']:
+                self.notifier.send_tsl_other_change(change)
 
     def run_check(self):
         """Основная проверка TSL"""

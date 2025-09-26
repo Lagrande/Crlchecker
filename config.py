@@ -68,6 +68,7 @@ CRL_CACHE_DIR = f'{DATA_DIR}/crl_cache'
 LOG_FILE = f'{DATA_DIR}/logs/crl_monitor.log'
 STATE_FILE = f'{DATA_DIR}/crl_state.json'
 STATS_FILE = f'{DATA_DIR}/weekly_stats.json'
+DB_PATH = f'{DATA_DIR}/crlchecker.db'
 
 # Путь к файлу с URL CRL из TSL (используется в crl_monitor.py)
 TSL_CRL_URLS_FILE = os.path.join(DATA_DIR, 'crl_urls_from_tsl.txt')
@@ -79,44 +80,12 @@ AVAILABILITY_TIMEOUT = 10
 # Можно отключить в средах с нестандартными цепочками: VERIFY_TLS=false
 VERIFY_TLS = os.getenv('VERIFY_TLS', 'true').lower() == 'true'
 
-# --- Доп. опции ---
-# Опциональный вывод размера CRL в МБ в уведомлениях
-SHOW_CRL_SIZE_MB = os.getenv('SHOW_CRL_SIZE_MB', 'false').lower() == 'true'
+# Настройки базы данных
+DB_ENABLED = True
 
-# Фильтр по списку реестровых номеров TSL (через запятую). Если пусто — без фильтра
-_TSL_REGISTRY_NUMBERS_RAW = os.getenv('TSL_REGISTRY_NUMBERS', '')
-TSL_REGISTRY_NUMBERS = set(
-    num.strip() for num in _TSL_REGISTRY_NUMBERS_RAW.split(',') if num.strip()
-)
+# Показывать размер CRL в уведомлениях
+SHOW_CRL_SIZE_MB = True
 
-# Фильтр по списку ОГРН (через запятую). Если не пусто — фильтрация по ОГРН имеет приоритет над реестровым номером
-_TSL_OGRN_LIST_RAW = os.getenv('TSL_OGRN_LIST', '')
-TSL_OGRN_LIST = set(
-    num.strip() for num in _TSL_OGRN_LIST_RAW.split(',') if num.strip()
-)
-
-# --- База данных ---
-# Путь к SQLite базе данных
-DB_PATH = os.getenv('DB_PATH', os.path.join(DATA_DIR, 'crlchecker.db'))
-DB_ENABLED = os.getenv('DB_ENABLED', 'true').lower() == 'true'
-
-# --- Доп. опции ---
-# Опциональный вывод размера CRL в МБ в уведомлениях
-SHOW_CRL_SIZE_MB = os.getenv('SHOW_CRL_SIZE_MB', 'false').lower() == 'true'
-
-# Фильтр по списку реестровых номеров TSL (через запятую). Если пусто — без фильтра
-_TSL_REGISTRY_NUMBERS_RAW = os.getenv('TSL_REGISTRY_NUMBERS', '')
-TSL_REGISTRY_NUMBERS = set(
-    num.strip() for num in _TSL_REGISTRY_NUMBERS_RAW.split(',') if num.strip()
-)
-
-# Фильтр по списку ОГРН (через запятую). Если не пусто — фильтрация по ОГРН имеет приоритет над реестровым номером
-_TSL_OGRN_LIST_RAW = os.getenv('TSL_OGRN_LIST', '')
-TSL_OGRN_LIST = set(
-    num.strip() for num in _TSL_OGRN_LIST_RAW.split(',') if num.strip()
-)
-
-# --- База данных ---
-# Путь к SQLite базе данных
-DB_PATH = os.getenv('DB_PATH', os.path.join(DATA_DIR, 'crlchecker.db'))
-DB_ENABLED = os.getenv('DB_ENABLED', 'true').lower() == 'true'
+# Фильтры TSL
+TSL_OGRN_LIST = os.getenv('TSL_OGRN_LIST', '').split(',') if os.getenv('TSL_OGRN_LIST') else None
+TSL_REGISTRY_NUMBERS = os.getenv('TSL_REGISTRY_NUMBERS', '').split(',') if os.getenv('TSL_REGISTRY_NUMBERS') else None

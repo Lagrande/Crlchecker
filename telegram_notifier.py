@@ -119,42 +119,52 @@ class TelegramNotifier:
                 return str(dt)
         return "Не указано"
 
-    def send_expiring_crl_alert(self, crl_name, time_left_hours, next_update, crl_url, size_mb=None, ca_name=None, ca_reg_number=None):
+    def send_expiring_crl_alert(self, crl_name, time_left_hours, next_update, crl_url, size_mb=None, ca_name=None, ca_reg_number=None, crl_fingerprint=None, crl_key_identifier=None, crl_number=None):
         """Уведомление об истекающем CRL"""
         if not NOTIFY_EXPIRING_CRL:
             logger.debug("Уведомления об истекающих CRL отключены в конфигурации.")
             return
         now_msk = datetime.now(MOSCOW_TZ)
+        # Форматируем серийный номер CRL
+        crl_number_formatted = "Неизвестен" if crl_number is None else f"{crl_number:x}"
+        
         message = (
             f"⚠️ <b>ВНИМАНИЕ: CRL скоро истекает</b>\n"
             f"📁 Имя файла: <code>{crl_name}</code>\n"
             f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный УЦ'}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_reg_number or 'Неизвестный номер'}</code>\n"
             f"🔗 URL: <code>{crl_url}</code>\n"
+            f"🔢 Серийный номер CRL: <code>{crl_number_formatted}</code>\n"
+            f"🔑 Идентификатор ключа издателя: <code>{crl_key_identifier or 'Неизвестен'}</code>\n"
             f"⏰ Осталось: <b>{time_left_hours:.1f} часа</b>\n"
             f"📅 Следующее обновление: {self.format_datetime(next_update)}\n"
             f"🕐 Текущее время: {self.format_datetime(now_msk)}"
         )
         self.send_message(message)
 
-    def send_expired_crl_alert(self, crl_name, expired_time, crl_url, size_mb=None, ca_name=None, ca_reg_number=None):
+    def send_expired_crl_alert(self, crl_name, expired_time, crl_url, size_mb=None, ca_name=None, ca_reg_number=None, crl_fingerprint=None, crl_key_identifier=None, crl_number=None):
         """Уведомление об истекшем CRL"""
         if not NOTIFY_EXPIRED_CRL:
             logger.debug("Уведомления об истекших CRL отключены в конфигурации.")
             return
         now_msk = datetime.now(MOSCOW_TZ)
+        # Форматируем серийный номер CRL
+        crl_number_formatted = "Неизвестен" if crl_number is None else f"{crl_number:x}"
+        
         message = (
             f"🚨 <b>КРИТИЧНО: CRL истек</b>\n"
             f"📁 Имя файла: <code>{crl_name}</code>\n"
             f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный УЦ'}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_reg_number or 'Неизвестный номер'}</code>\n"
             f"🔗 URL: <code>{crl_url}</code>\n"
+            f"🔢 Серийный номер CRL: <code>{crl_number_formatted}</code>\n"
+            f"🔑 Идентификатор ключа издателя: <code>{crl_key_identifier or 'Неизвестен'}</code>\n"
             f"⏰ Истек: {self.format_datetime(expired_time)}\n"
             f"🕐 Текущее время: {self.format_datetime(now_msk)}"
         )
         self.send_message(message)
 
-    def send_new_crl_info(self, crl_name, revoked_count, revoked_increase, categories, publication_time, crl_number, crl_url, total_revoked, next_update, size_mb=None, ca_name=None, ca_reg_number=None):
+    def send_new_crl_info(self, crl_name, revoked_count, revoked_increase, categories, publication_time, crl_number, crl_url, total_revoked, next_update, size_mb=None, ca_name=None, ca_reg_number=None, crl_fingerprint=None, crl_key_identifier=None):
         """Уведомление о новом CRL и приросте отозванных сертификатов"""
         if not NOTIFY_NEW_CRL:
             logger.debug("Уведомления о новых CRL отключены в конфигурации.")
@@ -162,18 +172,28 @@ class TelegramNotifier:
         categories_text = ""
         if categories:
             categories_text = "\n".join([f"  • {cat}: {count}" for cat, count in sorted(categories.items())])
+        
+        # Форматируем номер CRL, убирая ведущие нули
+        if crl_number is None:
+            crl_number_formatted = "Неизвестен"
+        else:
+            # Убираем ведущие нули из hex представления
+            crl_number_formatted = f"{crl_number:x}"
+        
         message = (
             f"🆕 <b>Новая версия CRL опубликована</b>\n"
             f"📁 Имя файла: <code>{crl_name}</code>\n"
             f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный УЦ'}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_reg_number or 'Неизвестный номер'}</code>\n"
             f"🔗 URL: <code>{crl_url}</code>\n"
-            f"🔢 Номер CRL: <b>{crl_number}</b>\n"
+            f"🔢 Серийный номер CRL: <code>{crl_number_formatted}</code>\n"
+            f"🔑 Идентификатор ключа издателя: <code>{crl_key_identifier or 'Неизвестен'}</code>\n"
             f"📄 Всего отозвано: <b>{total_revoked}</b>\n"
             f"📈 Прирост: <b>+{revoked_increase}</b>\n"
-            f"📅 Время публикации: {self.format_datetime(publication_time)}\n" # Используем переданное publication_time
-            f"📅 Следующее обновление: {self.format_datetime(next_update)}\n" # Используем переданное next_update
+            f"📅 Время публикации: {self.format_datetime(publication_time)}\n"
+            f"📅 Следующее обновление: {self.format_datetime(next_update)}\n"
         )
+        
         # Опционально добавляем размер CRL
         if SHOW_CRL_SIZE_MB and size_mb is not None:
             try:
@@ -292,6 +312,216 @@ class TelegramNotifier:
             f"🏢 Название: <b>{ca_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_info['reg_number']}</code>\n"
             f"📝 Причина: {reason}\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
+
+    def send_tsl_removed_ca(self, ca_info):
+        """Уведомление об удаленном УЦ"""
+        if not NOTIFY_STATUS_CHANGES:
+            logger.debug("Уведомления об изменениях статуса УЦ отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        message = (
+            f"🗑️ <b>УЦ удален из списка</b>\n"
+            f"🏢 Название: <b>{ca_info['name']}</b>\n"
+            f"🔢 Реестровый номер: <code>{ca_info['reg_number']}</code>\n"
+            f"🏛️ ОГРН: <code>{ca_info.get('ogrn', 'Не указан')}</code>\n"
+            f"📝 Причина: {ca_info['reason']}\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
+
+    def send_tsl_name_change(self, change_info):
+        """Уведомление об изменении названия УЦ"""
+        if not NOTIFY_STATUS_CHANGES:
+            logger.debug("Уведомления об изменениях статуса УЦ отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        message = (
+            f"📝 <b>Изменение названия УЦ</b>\n"
+            f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
+            f"📄 Было: <b>{change_info['old_name']}</b>\n"
+            f"📄 Стало: <b>{change_info['new_name']}</b>\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
+
+    def send_tsl_ogrn_change(self, change_info):
+        """Уведомление об изменении ОГРН УЦ"""
+        if not NOTIFY_STATUS_CHANGES:
+            logger.debug("Уведомления об изменениях статуса УЦ отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        message = (
+            f"🏛️ <b>Изменение ОГРН УЦ</b>\n"
+            f"🏢 Название: <b>{change_info['name']}</b>\n"
+            f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
+            f"📄 Было: <code>{change_info['old_ogrn']}</code>\n"
+            f"📄 Стало: <code>{change_info['new_ogrn']}</code>\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
+
+    def send_tsl_crl_added(self, change_info):
+        """Уведомление о добавлении новых CRL"""
+        if not NOTIFY_CRL_CHANGES:
+            logger.debug("Уведомления об изменениях CRL отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        crl_list = "\n".join([f"• <code>{crl}</code>" for crl in change_info['crls']])
+        message = (
+            f"➕ <b>Добавлены новые CRL</b>\n"
+            f"🏢 УЦ: <b>{change_info['name']}</b>\n"
+            f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
+            f"📋 Новые CRL:\n{crl_list}\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
+
+    def send_tsl_crl_removed(self, change_info):
+        """Уведомление об удалении CRL"""
+        if not NOTIFY_CRL_CHANGES:
+            logger.debug("Уведомления об изменениях CRL отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        crl_list = "\n".join([f"• <code>{crl}</code>" for crl in change_info['crls']])
+        message = (
+            f"➖ <b>Удалены CRL</b>\n"
+            f"🏢 УЦ: <b>{change_info['name']}</b>\n"
+            f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
+            f"📋 Удаленные CRL:\n{crl_list}\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
+
+    def send_tsl_crl_url_change(self, change_info):
+        """Уведомление об изменении адресов CRL"""
+        if not NOTIFY_CRL_CHANGES:
+            logger.debug("Уведомления об изменениях CRL отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        old_urls = "\n".join([f"• <code>{url}</code>" for url in change_info['old_urls']])
+        new_urls = "\n".join([f"• <code>{url}</code>" for url in change_info['new_urls']])
+        message = (
+            f"🔄 <b>Изменены адреса CRL</b>\n"
+            f"🏢 УЦ: <b>{change_info['name']}</b>\n"
+            f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
+            f"📄 Было:\n{old_urls}\n"
+            f"📄 Стало:\n{new_urls}\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
+
+    def send_tsl_other_change(self, change_info):
+        """Уведомление о других изменениях в TSL"""
+        if not NOTIFY_STATUS_CHANGES:
+            logger.debug("Уведомления об изменениях статуса УЦ отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        message = (
+            f"📋 <b>Другие изменения в TSL</b>\n"
+            f"🏢 УЦ: <b>{change_info['name']}</b>\n"
+            f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
+            f"📝 Поле: <b>{change_info['field']}</b>\n"
+            f"📄 Было: <code>{change_info['old_value']}</code>\n"
+            f"📄 Стало: <code>{change_info['new_value']}</code>\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
+
+    def send_tsl_short_name_change(self, change_info):
+        """Уведомление об изменении краткого названия УЦ"""
+        if not NOTIFY_STATUS_CHANGES:
+            logger.debug("Уведомления об изменениях статуса УЦ отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        message = (
+            f"📝 <b>Изменение краткого названия УЦ</b>\n"
+            f"🏢 УЦ: <b>{change_info['name']}</b>\n"
+            f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
+            f"📄 Было: <b>{change_info['old_short_name']}</b>\n"
+            f"📄 Стало: <b>{change_info['new_short_name']}</b>\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
+
+    def send_tsl_inn_change(self, change_info):
+        """Уведомление об изменении ИНН УЦ"""
+        if not NOTIFY_STATUS_CHANGES:
+            logger.debug("Уведомления об изменениях статуса УЦ отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        message = (
+            f"🏛️ <b>Изменение ИНН УЦ</b>\n"
+            f"🏢 Название: <b>{change_info['name']}</b>\n"
+            f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
+            f"📄 Было: <code>{change_info['old_inn']}</code>\n"
+            f"📄 Стало: <code>{change_info['new_inn']}</code>\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
+
+    def send_tsl_email_change(self, change_info):
+        """Уведомление об изменении email УЦ"""
+        if not NOTIFY_STATUS_CHANGES:
+            logger.debug("Уведомления об изменениях статуса УЦ отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        message = (
+            f"📧 <b>Изменение email УЦ</b>\n"
+            f"🏢 Название: <b>{change_info['name']}</b>\n"
+            f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
+            f"📄 Было: <code>{change_info['old_email']}</code>\n"
+            f"📄 Стало: <code>{change_info['new_email']}</code>\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
+
+    def send_tsl_website_change(self, change_info):
+        """Уведомление об изменении веб-сайта УЦ"""
+        if not NOTIFY_STATUS_CHANGES:
+            logger.debug("Уведомления об изменениях статуса УЦ отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        message = (
+            f"🌐 <b>Изменение веб-сайта УЦ</b>\n"
+            f"🏢 Название: <b>{change_info['name']}</b>\n"
+            f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
+            f"📄 Было: <code>{change_info['old_website']}</code>\n"
+            f"📄 Стало: <code>{change_info['new_website']}</code>\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
+
+    def send_tsl_registry_url_change(self, change_info):
+        """Уведомление об изменении URL реестра сертификатов УЦ"""
+        if not NOTIFY_STATUS_CHANGES:
+            logger.debug("Уведомления об изменениях статуса УЦ отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        message = (
+            f"📋 <b>Изменение URL реестра сертификатов УЦ</b>\n"
+            f"🏢 Название: <b>{change_info['name']}</b>\n"
+            f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
+            f"📄 Было: <code>{change_info['old_registry_url']}</code>\n"
+            f"📄 Стало: <code>{change_info['new_registry_url']}</code>\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)
+
+    def send_tsl_address_change(self, change_info):
+        """Уведомление об изменении адреса УЦ"""
+        if not NOTIFY_STATUS_CHANGES:
+            logger.debug("Уведомления об изменениях статуса УЦ отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        message = (
+            f"📍 <b>Изменение адреса УЦ</b>\n"
+            f"🏢 Название: <b>{change_info['name']}</b>\n"
+            f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
+            f"📄 Было: <code>{change_info['old_address']}</code>\n"
+            f"📄 Стало: <code>{change_info['new_address']}</code>\n"
             f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
         )
         self.send_message(message)

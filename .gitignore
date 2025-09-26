@@ -3,3 +3,5 @@ certs/
 logs/
 __pycache__/
 .DS_Store
+.env
+tsl-2.xml
