@@ -5,3 +5,7 @@ __pycache__/
 .DS_Store
 .env
 tsl-2.xml
+.dockerignore
+data1/
+1.yml
+__init__.py

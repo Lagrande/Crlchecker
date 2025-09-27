@@ -181,15 +181,16 @@ class CRLMonitor:
             try:
                 from db import crl_state_upsert
                 for k, v in self.state.items():
-                        crl_state_upsert(k, v)
+                    crl_state_upsert(k, v)
                 return
             except Exception as e:
-                    logger.error(f"Ошибка сохранения состояния в БД: {e}")
-            try:
-                with open(STATE_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(self.state, f, ensure_ascii=False, indent=2, default=str)
-            except Exception as e:
-                logger.error(f"Ошибка сохранения состояния в файл: {e}")
+                logger.error(f"Ошибка сохранения состояния в БД: {e}")
+        
+        try:
+            with open(STATE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.state, f, ensure_ascii=False, indent=2, default=str)
+        except Exception as e:
+            logger.error(f"Ошибка сохранения состояния в файл: {e}")
 
     def load_weekly_stats(self):
         """Загрузка недельной статистики: БД или файл (fallback)."""

@@ -15,6 +15,38 @@ class TelegramNotifier:
         self.max_retries = 3 # Максимальное количество повторных попыток отправки
         self.base_delay = 1  # Базовая задержка в секундах между попытками
 
+    def split_message(self, message, max_length=4096):
+        """Разбивает длинное сообщение на части для Telegram (лимит 4096 символов)"""
+        if len(message) <= max_length:
+            return [message]
+        
+        parts = []
+        current_part = ""
+        lines = message.split('\n')
+        
+        for line in lines:
+            # Если добавление строки не превысит лимит
+            if len(current_part) + len(line) + 1 <= max_length:
+                if current_part:
+                    current_part += '\n' + line
+                else:
+                    current_part = line
+            else:
+                # Если текущая часть не пустая, сохраняем её
+                if current_part:
+                    parts.append(current_part)
+                    current_part = line
+                else:
+                    # Если даже одна строка превышает лимит, обрезаем её
+                    parts.append(line[:max_length])
+                    current_part = ""
+        
+        # Добавляем последнюю часть, если она есть
+        if current_part:
+            parts.append(current_part)
+            
+        return parts
+
     def send_message(self, message):
         """Отправка сообщения в Telegram с обработкой 429"""
         # Проверяем режим Dry-run
@@ -40,16 +72,39 @@ class TelegramNotifier:
              # Это грубая замена, но может помочь
              message = message.encode('utf-8', 'replace').decode('utf-8', 'replace')
              logger.warning("Обнаружены и заменены проблемные символы UTF в сообщении.")
-        data = {
-            'chat_id': self.chat_id,
-            'text': message,
-            'parse_mode': 'HTML' # Используем HTML для форматирования
-        }
+        # Разбиваем сообщение на части, если оно слишком длинное
+        message_parts = self.split_message(message)
+        
+        for part_index, message_part in enumerate(message_parts):
+            # Добавляем номер части, если сообщение разбито
+            if len(message_parts) > 1:
+                message_part = f"📄 Часть {part_index + 1}/{len(message_parts)}\n\n{message_part}"
+            
+            data = {
+                'chat_id': self.chat_id,
+                'text': message_part,
+                'parse_mode': 'HTML' # Используем HTML для форматирования
+            }
+            
+            # Отправляем каждую часть отдельно
+            self._send_single_message(data, part_index + 1, len(message_parts))
+            
+            # Небольшая задержка между частями, чтобы избежать rate limiting
+            if part_index < len(message_parts) - 1:
+                time.sleep(0.5)
+
+    def _send_single_message(self, data, part_number=None, total_parts=None):
+        """Отправка одной части сообщения"""
+        url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+        
         for attempt in range(self.max_retries):
              try:
                  response = requests.post(url, data=data, timeout=30) # Добавим таймаут
                  response.raise_for_status() # Вызовет исключение для статусов 4xx и 5xx
-                 logger.warning("Уведомление успешно отправлено в Telegram.")
+                 if part_number and total_parts:
+                     logger.info(f"Часть {part_number}/{total_parts} успешно отправлена в Telegram.")
+                 else:
+                     logger.info("Уведомление успешно отправлено в Telegram.")
                  return # Успешно отправлено, выходим из функции
              except requests.exceptions.HTTPError as e:
                  if response.status_code == 429:

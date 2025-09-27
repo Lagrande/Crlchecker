@@ -7,6 +7,8 @@ mkdir -p /app/data/stats
 
 # Init DB schema and optionally preload URL->CA mapping from JSON
 python - <<'PY'
+import sys
+sys.path.insert(0, '/app')
 import os, json
 from db import init_db, bulk_upsert_ca_mapping, bulk_upsert_crl_state
 
@@ -54,6 +56,8 @@ PY
 
 echo "Starting metrics server on port ${METRICS_PORT:-8000}..."
 python -c "
+import sys
+sys.path.insert(0, '/app')
 from metrics_server import start_metrics_server, MetricsRegistry
 from config import METRICS_PORT
 from prometheus_client import Counter, Gauge
