@@ -339,4 +339,108 @@ python run_all_monitors.py
 - Полезно для отладки и тестирования новых функций
 - Включается переменной окружения `DRY_RUN=true`
 
+### Запросы к базе данных
+
+Система использует SQLite базу данных для хранения состояния CRL. Вот полезные запросы для анализа данных:
+
+> **💡 Совет:** Все запросы выполняются внутри контейнера. Убедитесь, что контейнер запущен: `docker compose up -d`
+
+#### 🔍 **Общая статистика**
+```bash
+# Общее количество CRL в базе
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT COUNT(*) as total_crls FROM crl_state;"
+
+# Количество CRL по УЦ
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT ca_name, COUNT(*) as crl_count FROM crl_state GROUP BY ca_name ORDER BY crl_count DESC LIMIT 10;"
+```
+
+#### ⚠️ **Брошенные CRL (просроченные больше месяца)**
+```bash
+# ТОП самых старых брошенных CRL
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT crl_name, ca_name, ca_reg_number, url, next_update, revoked_count, last_check, ROUND((julianday('now') - julianday(next_update)), 1) as days_expired FROM crl_state WHERE next_update IS NOT NULL AND datetime(next_update) < datetime('now', '-1 month') ORDER BY days_expired DESC LIMIT 50;"
+
+# Количество брошенных CRL
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT COUNT(*) as abandoned_crls FROM crl_state WHERE next_update IS NOT NULL AND datetime(next_update) < datetime('now', '-1 month');"
+
+# Группировка брошенных CRL по УЦ
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT ca_name, ca_reg_number, COUNT(*) as abandoned_crls_count, GROUP_CONCAT(crl_name, ', ') as abandoned_crl_names FROM crl_state WHERE next_update IS NOT NULL AND datetime(next_update) < datetime('now', '-1 month') GROUP BY ca_name, ca_reg_number ORDER BY abandoned_crls_count DESC;"
+
+
+```
+
+#### 📊 **Статистика по отозванным сертификатам**
+```bash
+# Топ-10 CRL с наибольшим количеством отозванных сертификатов
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT crl_name, ca_name, revoked_count, last_check FROM crl_state WHERE revoked_count > 0 ORDER BY revoked_count DESC LIMIT 10;"
+
+# Общее количество отозванных сертификатов
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT SUM(revoked_count) as total_revoked FROM crl_state WHERE revoked_count > 0;"
+```
+
+#### 🏢 **Статистика по УЦ**
+```bash
+# УЦ с наибольшим количеством CRL
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT ca_name, ca_reg_number, COUNT(*) as crl_count, SUM(revoked_count) as total_revoked FROM crl_state GROUP BY ca_name, ca_reg_number ORDER BY crl_count DESC LIMIT 10;"
+
+# УЦ с наибольшим количеством отозванных сертификатов
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT ca_name, ca_reg_number, SUM(revoked_count) as total_revoked, COUNT(*) as crl_count FROM crl_state WHERE revoked_count > 0 GROUP BY ca_name, ca_reg_number ORDER BY total_revoked DESC LIMIT 10;"
+```
+
+#### 📅 **Анализ по времени**
+```bash
+# CRL, обновленные за последние 24 часа
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT crl_name, ca_name, last_check FROM crl_state WHERE last_check > datetime('now', '-1 day') ORDER BY last_check DESC;"
+```
+
+#### 🔧 **Техническая информация**
+```bash
+# Структура таблицы crl_state
+docker exec crlchecker sqlite3 /app/data/crlchecker.db ".schema crl_state"
+
+# Размер базы данных
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT page_count * page_size as size_bytes FROM pragma_page_count(), pragma_page_size();"
+```
+
+#### 📈 **Еженедельная статистика**
+```bash
+# Статистика по недельным отчетам (если включена)
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT * FROM weekly_stats ORDER BY week_start DESC LIMIT 5;"
+
+# Детальная статистика по категориям отзыва
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT week_start, ca_name, category, count FROM weekly_details ORDER BY week_start DESC, count DESC LIMIT 10;"
+```
+
+#### 🔍 **Поиск и фильтрация**
+```bash
+# Поиск CRL по имени УЦ
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT crl_name, ca_name, url, revoked_count FROM crl_state WHERE ca_name LIKE '%Сбербанк%' ORDER BY revoked_count DESC;"
+
+# Поиск CRL по реестровому номеру
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT crl_name, ca_name, ca_reg_number, url FROM crl_state WHERE ca_reg_number = '81';"
+
+# CRL с определенным доменом в URL
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT crl_name, ca_name, url FROM crl_state WHERE url LIKE '%tax.gov.ru%';"
+```
+
+#### 🛠️ **Управление данными**
+```bash
+# Очистка старых записей (старше 1 года)
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "DELETE FROM crl_state WHERE last_check < datetime('now', '-1 year');"
+
+# Обновление информации об УЦ
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "UPDATE crl_state SET ca_name = 'Новое название УЦ' WHERE ca_reg_number = '123';"
+
+# Экспорт данных в CSV
+docker exec crlchecker sqlite3 /app/data/crlchecker.db -header -csv "SELECT * FROM crl_state;" > crl_export.csv
+```
+
+#### 📋 **Примеры для мониторинга**
+```bash
+# Еженедельный отчет о брошенных CRL
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT ca_name, COUNT(*) as abandoned_count FROM crl_state WHERE next_update IS NOT NULL AND datetime(next_update) < datetime('now', '-1 month') GROUP BY ca_name ORDER BY abandoned_count DESC;"
+
+
+
+
+
 
