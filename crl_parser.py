@@ -228,8 +228,8 @@ class CRLParser:
             logger.debug(f"Не удалось получить идентификатор ключа издателя CRL: {e}")
 
         info = {
-            'this_update': crl.last_update,
-            'next_update': crl.next_update,
+            'this_update': crl.last_update_utc,
+            'next_update': crl.next_update_utc,
             'revoked_count': len(list(crl)),
             'crl_number': crl_number,
             'issuer': crl.issuer.rfc4514_string() if crl.issuer else None,
@@ -246,7 +246,7 @@ class CRLParser:
             for revoked_cert in crl:
                 cert_info = {
                     'serial_number': revoked_cert.serial_number,
-                    'revocation_date': revoked_cert.revocation_date,
+                    'revocation_date': revoked_cert.revocation_date_utc,
                     'reason': None
                 }
                 

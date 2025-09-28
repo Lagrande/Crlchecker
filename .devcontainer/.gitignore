@@ -1,0 +1,19 @@
+# Environment files
+.env
+.env.local
+.env.development
+.env.production
+
+# Debug files
+debug_crl_*.json
+debug_*.log
+
+# VS Code settings
+.vscode/settings.json
+.vscode/launch.json
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db

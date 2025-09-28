@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  crlchecker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: crlchecker-dev
+    environment:
+      - TZ=Europe/Moscow
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-YOUR_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-YOUR_CHAT_ID}
+      - FNS_ONLY=false
+      - VERIFY_TLS=false
+      - METRICS_PORT=8000
+      # Development settings
+      - SHOW_CRL_SIZE_MB=true
+      - DB_ENABLED=true
+      - DB_PATH=/app/data/crlchecker.db
+      - DRY_RUN=true  # Enable dry-run by default for development
+      # TSL filtering (optional)
+      - TSL_OGRN_LIST=
+      - TSL_REGISTRY_NUMBERS=
+      # Custom CDP sources (optional)
+      - CDP_SOURCES=${CDP_SOURCES:-}
+      # TSL notifications (all enabled by default)
+      - NOTIFY_NEW_CAS=true
+      - NOTIFY_REMOVED_CAS=true
+      - NOTIFY_DATE_CHANGES=true
+      - NOTIFY_CRL_CHANGES=true
+      - NOTIFY_STATUS_CHANGES=true
+      - NOTIFY_NAME_CHANGES=true
+      - NOTIFY_SHORT_NAME_CHANGES=true
+      - NOTIFY_OGRN_CHANGES=true
+      - NOTIFY_INN_CHANGES=true
+      - NOTIFY_EMAIL_CHANGES=true
+      - NOTIFY_WEBSITE_CHANGES=true
+      - NOTIFY_ADDRESS_CHANGES=true
+      - NOTIFY_REGISTRY_URL_CHANGES=true
+      - NOTIFY_PAK_CHANGES=true
+      - NOTIFY_CERTIFICATE_CHANGES=true
+      - NOTIFY_OTHER_CHANGES=true
+      # CRL notifications
+      - NOTIFY_NEW_CRL=true
+      - NOTIFY_EXPIRING_CRL=true
+      - NOTIFY_EXPIRED_CRL=true
+      - NOTIFY_MISSED_CRL=true
+      - NOTIFY_WEEKLY_STATS=true
+    volumes:
+      - ../data:/app/data
+      - ../:/app
+    ports:
+      - "8000:8000"  # Metrics server
+    working_dir: /app
+    command: /bin/bash
+    stdin_open: true
+    tty: true
+    networks:
+      - crlchecker-dev
+
+networks:
+  crlchecker-dev:
+    driver: bridge
