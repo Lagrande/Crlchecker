@@ -28,6 +28,7 @@ CRLChecker — система мониторинга списков отозва
 - `DB_ENABLED`: `true|false` — использовать SQLite базу данных для хранения состояния (по умолчанию `true`)
 - `DB_PATH`: путь к файлу SQLite базы данных (по умолчанию `/app/data/crlchecker.db`)
 - `DRY_RUN`: `true|false` — режим Dry-run без отправки уведомлений в Telegram (по умолчанию `false`)
+- `CDP_SOURCES`: кастомные источники CRL (CDP) через запятую. Пример: `CDP_SOURCES=http://pki.tax.gov.ru/cdp/,http://cdp.tax.gov.ru/cdp/`
 
 Фильтрация TSL по УЦ:
 - `TSL_OGRN_LIST`: список ОГРН для точного отбора УЦ из TSL (через запятую). Пример: `TSL_OGRN_LIST=1047702026701,1027700132195`
@@ -212,6 +213,8 @@ services:
       - FNS_ONLY=false
       - VERIFY_TLS=false
       - DRY_RUN=false
+      # Кастомные источники CRL (опционально)
+      # - CDP_SOURCES=http://pki.tax.gov.ru/cdp/,http://cdp.tax.gov.ru/cdp/
       # Фильтрация TSL
       - TSL_OGRN_LIST=
       - TSL_REGISTRY_NUMBERS=

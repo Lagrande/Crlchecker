@@ -35,11 +35,17 @@ NOTIFY_WEEKLY_STATS = os.getenv('NOTIFY_WEEKLY_STATS', 'true').lower() == 'true'
 
 # --- Остальные настройки ---
 # Список CDP источников
-CDP_SOURCES = [
-    # 'http://pki.tax.gov.ru/cdp/',
-    #  'http://cdp.tax.gov.ru/cdp/',
-    # Добавьте новые источники здесь
-]
+# Источники CRL (CDP - Certificate Distribution Points)
+# Можно настроить через переменную окружения CDP_SOURCES (разделенные запятыми)
+CDP_SOURCES_ENV = os.getenv('CDP_SOURCES', '')
+if CDP_SOURCES_ENV:
+    CDP_SOURCES = [url.strip() for url in CDP_SOURCES_ENV.split(',') if url.strip()]
+else:
+    CDP_SOURCES = [
+        # 'http://pki.tax.gov.ru/cdp/',
+        # 'http://cdp.tax.gov.ru/cdp/',
+        # Добавьте новые источники здесь
+    ]
 
 # Известные пути к CRL файлам (резервный метод)
 KNOWN_CRL_PATHS = [

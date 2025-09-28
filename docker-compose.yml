@@ -15,6 +15,8 @@ services:
       - DB_ENABLED=true
       - DB_PATH=/app/data/crlchecker.db
       - DRY_RUN=false                    # Режим Dry-run (без отправки уведомлений в Telegram)
+      # Кастомные источники CRL (CDP) через запятую
+      - CDP_SOURCES=${CDP_SOURCES:-}
       # Перечень реестровых номеров через запятую; пусто — без фильтра
       # - TSL_REGISTRY_NUMBERS=81
       # Перечень ОГРН через запятую; если задан, используется фильтр по ОГРН

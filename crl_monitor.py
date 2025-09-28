@@ -616,6 +616,11 @@ class CRLMonitor:
             except Exception:
                 # На всякий случай fallback к полным категориям
                 delta_categories = categories
+            
+            # Если дельты пустые, показываем полные категории (для первого запуска или если нет изменений)
+            if not delta_categories and categories:
+                delta_categories = categories
+                logger.info(f"Нет изменений в категориях, показываем полные категории для {crl_name}: {categories}")
 
             # Если УЦ не передан, попробуем достать из state (на случай первого прохода)
             if not ca_name or not ca_reg_number:

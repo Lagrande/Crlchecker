@@ -232,6 +232,9 @@ class TelegramNotifier:
         categories_text = ""
         if categories:
             categories_text = "\n".join([f"  • {cat}: {count}" for cat, count in sorted(categories.items())])
+            logger.info(f"Категории для {crl_name}: {categories}")
+        else:
+            logger.warning(f"Категории пустые для {crl_name}")
         
         # Форматируем номер CRL, убирая ведущие нули
         if crl_number is None:
