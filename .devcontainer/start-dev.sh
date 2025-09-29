@@ -55,3 +55,4 @@ echo "Metrics server will be available at: http://localhost:8000"
 echo "Database file: /app/data/crlchecker.db"
 echo ""
 echo "Happy coding! 🎉"
+

@@ -9,3 +9,9 @@ tsl-2.xml
 data1/
 1.yml
 __init__.py
+.devcontainer/.gitignore
+.devcontainer/docker-compose.yml
+.devcontainer/env.example
+.devcontainer/QUICKSTART.md
+.devcontainer/README.md
+.devcontainer/start-dev.sh
