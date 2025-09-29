@@ -231,14 +231,15 @@ class CRLParser:
         # Безопасное получение issuer без предупреждения о длине атрибутов
         issuer_str = None
         try:
-            if crl.issuer:
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore",
-                        message="Attribute's length must be >= 1 and <= 64",
-                        category=UserWarning,
-                    )
-                    issuer_str = crl.issuer.rfc4514_string()
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="Attribute's length must be >= 1 and <= 64",
+                    category=UserWarning,
+                )
+                issuer_obj = getattr(crl, 'issuer', None)
+                if issuer_obj:
+                    issuer_str = issuer_obj.rfc4514_string()
         except Exception as e:
             logger.debug(f"Не удалось сформировать issuer (RFC4514): {e}")
 
