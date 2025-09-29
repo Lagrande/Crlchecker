@@ -632,7 +632,8 @@ class CRLMonitor:
                 crl_name,
                 current_count,
                 increase,
-                delta_categories,  # Используем дельты вместо полных категорий
+                categories,        # полные значения по категориям
+                delta_categories,  # дельты по категориям
                 ensure_moscow_tz(crl_info['this_update']),
                 current_crl_number,
                 url,

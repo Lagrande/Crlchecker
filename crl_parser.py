@@ -1,6 +1,7 @@
 # ./crl_parser.py
 import logging
 from cryptography import x509
+import warnings
 from cryptography.hazmat.backends import default_backend
 import requests
 import os
@@ -227,12 +228,26 @@ class CRLParser:
         except Exception as e:
             logger.debug(f"Не удалось получить идентификатор ключа издателя CRL: {e}")
 
+        # Безопасное получение issuer без предупреждения о длине атрибутов
+        issuer_str = None
+        try:
+            if crl.issuer:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message="Attribute's length must be >= 1 and <= 64",
+                        category=UserWarning,
+                    )
+                    issuer_str = crl.issuer.rfc4514_string()
+        except Exception as e:
+            logger.debug(f"Не удалось сформировать issuer (RFC4514): {e}")
+
         info = {
             'this_update': crl.last_update_utc,
             'next_update': crl.next_update_utc,
             'revoked_count': len(list(crl)),
             'crl_number': crl_number,
-            'issuer': crl.issuer.rfc4514_string() if crl.issuer else None,
+            'issuer': issuer_str,
             'crl_fingerprint': crl_fingerprint,
             'crl_key_identifier': crl_key_identifier,
             'revoked_certificates': [],

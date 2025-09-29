@@ -224,17 +224,33 @@ class TelegramNotifier:
         )
         self.send_message(message)
 
-    def send_new_crl_info(self, crl_name, revoked_count, revoked_increase, categories, publication_time, crl_number, crl_url, total_revoked, next_update, size_mb=None, ca_name=None, ca_reg_number=None, crl_fingerprint=None, crl_key_identifier=None):
+    def send_new_crl_info(self, crl_name, revoked_count, revoked_increase, categories_total, categories_delta, publication_time, crl_number, crl_url, total_revoked, next_update, size_mb=None, ca_name=None, ca_reg_number=None, crl_fingerprint=None, crl_key_identifier=None):
         """Уведомление о новом CRL и приросте отозванных сертификатов"""
         if not NOTIFY_NEW_CRL:
             logger.debug("Уведомления о новых CRL отключены в конфигурации.")
             return
         categories_text = ""
-        if categories:
-            categories_text = "\n".join([f"  • {cat}: {count}" for cat, count in sorted(categories.items())])
-            logger.info(f"Категории для {crl_name}: {categories}")
-        else:
-            logger.warning(f"Категории пустые для {crl_name}")
+        try:
+            categories_total = categories_total or {}
+            categories_delta = categories_delta or {}
+            all_keys = sorted(set(categories_total.keys()) | set(categories_delta.keys()))
+            if all_keys:
+                lines = []
+                for key in all_keys:
+                    total_val = int(categories_total.get(key, 0))
+                    delta_val = int(categories_delta.get(key, 0))
+                    # Показываем прирост только если он положительный и меньше общего значения,
+                    # чтобы не дублировать тот же номер (случай первого запуска/полной замены)
+                    if delta_val > 0 and delta_val < total_val:
+                        lines.append(f"  • {key}: {total_val} (+{delta_val})")
+                    else:
+                        lines.append(f"  • {key}: {total_val}")
+                categories_text = "\n".join(lines)
+                logger.info(f"Категории для {crl_name}: total={categories_total}, delta={categories_delta}")
+            else:
+                logger.warning(f"Категории пустые для {crl_name}")
+        except Exception as e:
+            logger.error(f"Ошибка формирования текста категорий для {crl_name}: {e}")
         
         # Форматируем номер CRL, убирая ведущие нули
         if crl_number is None:
