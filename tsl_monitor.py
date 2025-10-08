@@ -222,10 +222,50 @@ class TSLMonitor:
                                 all_crl_urls.add(url) # Добавляем в общий набор
                     if reg_number_element is not None and reg_number_element.text:
                         reg_number = reg_number_element.text.strip()
+                        # Попытка извлечь дополнительные поля из TSL (если присутствуют)
+                        def _txt(elem, default=None):
+                            return elem.text.strip() if (elem is not None and elem.text) else default
+
+                        # Поля о средстве УЦ
+                        ca_tool = _txt(ca_element.find('.//СредствоУЦ')) or _txt(ca_element.find('.//Средство'))
+                        ca_tool_class = _txt(ca_element.find('.//КлассСредстваУЦ')) or _txt(ca_element.find('.//КлассСредства'))
+
+                        # Поля сертификата УЦ (наименования тегов в TSL могут отличаться в зависимости от версии)
+                        cert_subject = _txt(ca_element.find('.//Субъект')) or _txt(ca_element.find('.//КомуВыдан'))
+                        cert_issuer = _txt(ca_element.find('.//Издатель')) or _txt(ca_element.find('.//КемВыдан'))
+                        cert_serial = _txt(ca_element.find('.//СерийныйНомер'))
+
+                        # Период действия сертификата: пытаемся собрать строку
+                        valid_from = _txt(ca_element.find('.//ДействителенС')) or _txt(ca_element.find('.//ДействуетС'))
+                        valid_to = _txt(ca_element.find('.//ДействителенПо')) or _txt(ca_element.find('.//ДействуетПо'))
+                        cert_validity = None
+                        if valid_from or valid_to:
+                            if valid_from and valid_to:
+                                cert_validity = f"{valid_from} — {valid_to}"
+                            else:
+                                cert_validity = valid_from or valid_to
+
+                        # Отпечаток сертификата (если публикуется в TSL)
+                        cert_fingerprint = _txt(ca_element.find('.//Отпечаток')) or _txt(ca_element.find('.//ОтпечатокСертификата'))
+
+                        # Номер CRL и идентификатор ключа издателя (если TSL их указывает на уровне УЦ)
+                        crl_number = _txt(ca_element.find('.//СерийныйНомерCRL')) or _txt(ca_element.find('.//НомерCRL'))
+                        issuer_key_id = _txt(ca_element.find('.//ИдентификаторКлючаИздателя')) or _txt(ca_element.find('.//ИдентификаторКлюча'))
+
                         active_cas[reg_number] = {
                             'name': name_element.text.strip() if name_element is not None and name_element.text else 'Не указано',
                             'effective_date': effective_date_iso,
-                            'crl_urls': list(ca_crl_urls) # Сохраняем CRL для этого УЦ
+                            'crl_urls': list(ca_crl_urls), # Сохраняем CRL для этого УЦ
+                            # Доп. поля из TSL (best-effort)
+                            'ca_tool': ca_tool,
+                            'ca_tool_class': ca_tool_class,
+                            'cert_subject': cert_subject,
+                            'cert_issuer': cert_issuer,
+                            'cert_serial': cert_serial,
+                            'cert_validity': cert_validity,
+                            'cert_fingerprint': cert_fingerprint,
+                            'crl_number': crl_number,
+                            'issuer_key_id': issuer_key_id,
                         }
             if ogrn_filters is not None:
                 logger.info(f"Фильтр TSL по ОГРН: {ogrn_filters}")
@@ -378,7 +418,17 @@ class TSLMonitor:
                         'reg_number': reg_num,
                         'name': ca_data.get('name'),
                         'action': 'added',
-                        'crls': list(added_crls)
+                        'crls': list(added_crls),
+                        # Прокидываем доп. поля из TSL, если есть
+                        'crl_number': ca_data.get('crl_number'),
+                        'issuer_key_id': ca_data.get('issuer_key_id'),
+                        'ca_tool': ca_data.get('ca_tool'),
+                        'ca_tool_class': ca_data.get('ca_tool_class'),
+                        'cert_subject': ca_data.get('cert_subject'),
+                        'cert_issuer': ca_data.get('cert_issuer'),
+                        'cert_serial': ca_data.get('cert_serial'),
+                        'cert_validity': ca_data.get('cert_validity'),
+                        'cert_fingerprint': ca_data.get('cert_fingerprint'),
                     })
                 
                 if removed_crls:

@@ -449,10 +449,39 @@ class TelegramNotifier:
             return
         now_msk = datetime.now(MOSCOW_TZ)
         crl_list = "\n".join([f"• <code>{crl}</code>" for crl in change_info['crls']])
+        # Дополнительные поля из TSL/контекста, если переданы
+        crl_number = change_info.get('crl_number')
+        crl_number_formatted = "Не указано"
+        try:
+            if crl_number is not None:
+                crl_number_formatted = f"{int(crl_number):x}"
+        except Exception:
+            # Если уже строка hex или иной формат
+            crl_number_formatted = str(crl_number) if crl_number is not None else "Не указано"
+
+        issuer_key_id = change_info.get('issuer_key_id') or change_info.get('crl_key_identifier') or 'Не указано'
+
+        ca_tool = change_info.get('ca_tool', 'Не указано')
+        ca_tool_class = change_info.get('ca_tool_class', 'Не указано')
+        cert_subject = change_info.get('cert_subject', 'Не указано')
+        cert_issuer = change_info.get('cert_issuer', 'Не указано')
+        cert_serial = change_info.get('cert_serial', 'Не указано')
+        cert_validity = change_info.get('cert_validity', 'Не указано')
+        cert_fingerprint = change_info.get('cert_fingerprint', 'Не указано')
+
         message = (
             f"➕ <b>Добавлены новые CRL</b>\n"
             f"🏢 УЦ: <b>{change_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
+            f"🔢 Серийный номер CRL: <code>{crl_number_formatted}</code>\n"
+            f"🔑 Идентификатор ключа издателя: <code>{issuer_key_id}</code>\n"
+            f"🛠️ Средство УЦ: <b>{ca_tool}</b>\n"
+            f"🏷️ Класс средства УЦ: <b>{ca_tool_class}</b>\n"
+            f"👤 Кому выдан: <code>{cert_subject}</code>\n"
+            f"🏛️ Кем выдан: <code>{cert_issuer}</code>\n"
+            f"#️⃣ Серийный номер: <code>{cert_serial}</code>\n"
+            f"📅 Действует: <code>{cert_validity}</code>\n"
+            f"🔏 Отпечаток: <code>{cert_fingerprint}</code>\n"
             f"📋 Новые CRL:\n{crl_list}\n"
             f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
         )
