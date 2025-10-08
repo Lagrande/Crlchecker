@@ -226,9 +226,17 @@ class TSLMonitor:
                         def _txt(elem, default=None):
                             return elem.text.strip() if (elem is not None and elem.text) else default
 
-                        # Поля о средстве УЦ
-                        ca_tool = _txt(ca_element.find('.//СредствоУЦ')) or _txt(ca_element.find('.//Средство'))
-                        ca_tool_class = _txt(ca_element.find('.//КлассСредстваУЦ')) or _txt(ca_element.find('.//КлассСредства'))
+                        # Поля о средстве УЦ (возможные варианты имен тегов в TSL)
+                        ca_tool = (
+                            _txt(ca_element.find('.//СредстваУЦ')) or
+                            _txt(ca_element.find('.//СредствоУЦ')) or
+                            _txt(ca_element.find('.//Средство'))
+                        )
+                        ca_tool_class = (
+                            _txt(ca_element.find('.//КлассСредствЭП')) or
+                            _txt(ca_element.find('.//КлассСредстваУЦ')) or
+                            _txt(ca_element.find('.//КлассСредства')) 
+                        )
 
                         # Поля сертификата УЦ (наименования тегов в TSL могут отличаться в зависимости от версии)
                         cert_subject = _txt(ca_element.find('.//Субъект')) or _txt(ca_element.find('.//КомуВыдан'))
@@ -279,7 +287,10 @@ class TSLMonitor:
                 for crl_url in ca_info.get('crl_urls', []):
                     url_to_ca_map[crl_url] = {
                         'name': ca_info['name'],
-                        'reg_number': reg_number
+                        'reg_number': reg_number,
+                        # Дополнительные поля для уведомлений об ошибках скачивания
+                        'crl_number': ca_info.get('crl_number'),
+                        'issuer_key_id': ca_info.get('issuer_key_id'),
                     }
             
             logger.info(f"Найдено {len(active_cas)} действующих УЦ")

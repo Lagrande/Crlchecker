@@ -633,3 +633,30 @@ class TelegramNotifier:
             f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
         )
         self.send_message(message)
+
+    def send_crl_download_failed(self, crl_name, tried_urls, last_error, ca_name=None, ca_reg_number=None, crl_number=None, issuer_key_id=None):
+        """Отдельное уведомление: не удалось скачать/найти CRL (по итогам всех попыток)"""
+        if not NOTIFY_CRL_DOWNLOAD_FAIL:
+            logger.warning("Уведомления об ошибках скачивания CRL отключены в конфигурации.")
+            return
+        now_msk = datetime.now(MOSCOW_TZ)
+        url_list = "\n".join([f"• <code>{u}</code>" for u in tried_urls])
+        crl_number_formatted = None
+        try:
+            if crl_number is not None:
+                crl_number_formatted = f"{int(crl_number):x}"
+        except Exception:
+            crl_number_formatted = str(crl_number) if crl_number is not None else None
+        
+        logger.warning(f"Отправка уведомления о провале скачивания CRL: crl_name={crl_name}, urls={tried_urls}, ca={ca_name}, reg={ca_reg_number}")
+        message = (
+            f"❗ <b>Не удалось скачать CRL — CRL не существует</b>\n"
+            f"🏢 УЦ: <b>{ca_name or 'Неизвестный УЦ'}</b>\n"
+            f"🔢 Реестровый номер: <code>{ca_reg_number or 'Неизвестен'}</code>\n"
+            f"📁 Имя файла: <code>{crl_name}</code>\n"
+            f"🔗 URL:\n{url_list}\n"
+            f"🔢 Серийный номер CRL: <code>{crl_number_formatted or 'Не указано'}</code>\n"
+            f"🔑 Идентификатор ключа издателя: <code>{issuer_key_id or 'Не указано'}</code>\n"
+            f"🕐 Время проверки: {self.format_datetime(now_msk.isoformat())}"
+        )
+        self.send_message(message)

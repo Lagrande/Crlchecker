@@ -32,6 +32,7 @@ NOTIFY_EXPIRED_CRL = os.getenv('NOTIFY_EXPIRED_CRL', 'true').lower() == 'true'  
 NOTIFY_NEW_CRL = os.getenv('NOTIFY_NEW_CRL', 'true').lower() == 'true'  # Новые версии CRL
 NOTIFY_MISSED_CRL = os.getenv('NOTIFY_MISSED_CRL', 'true').lower() == 'true'  # Пропущенные CRL
 NOTIFY_WEEKLY_STATS = os.getenv('NOTIFY_WEEKLY_STATS', 'true').lower() == 'true'  # Недельная статистика
+NOTIFY_CRL_DOWNLOAD_FAIL = os.getenv('NOTIFY_CRL_DOWNLOAD_FAIL', 'false').lower() == 'true'  # Ошибки скачивания CRL
 
 # --- Остальные настройки ---
 # Список CDP источников

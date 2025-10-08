@@ -50,6 +50,7 @@ services:
       - NOTIFY_EXPIRED_CRL=false         # Истекшие CRL
       - NOTIFY_NEW_CRL=true              # Новые версии CRL
       - NOTIFY_MISSED_CRL=true           # Пропущенные CRL
+      - NOTIFY_CRL_DOWNLOAD_FAIL=true
       - NOTIFY_WEEKLY_STATS=false        # Еженедельная статистика
     volumes:
       - ./data:/app/data

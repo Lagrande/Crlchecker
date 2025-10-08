@@ -15,12 +15,25 @@ def init_db():
     ensure_dirs()
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("PRAGMA journal_mode=WAL;")
+        # --- миграции схемы для ca_mapping: добавляем недостающие столбцы ---
+        try:
+            cur = conn.execute("PRAGMA table_info(ca_mapping);")
+            cols = {row[1] for row in cur.fetchall()}
+            if 'crl_number' not in cols:
+                conn.execute("ALTER TABLE ca_mapping ADD COLUMN crl_number TEXT;")
+            if 'issuer_key_id' not in cols:
+                conn.execute("ALTER TABLE ca_mapping ADD COLUMN issuer_key_id TEXT;")
+        except sqlite3.OperationalError:
+            # Таблицы может не быть — создадим ниже
+            pass
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS ca_mapping (
                 crl_url TEXT PRIMARY KEY,
                 ca_name TEXT NOT NULL,
-                ca_reg_number TEXT
+                ca_reg_number TEXT,
+                crl_number TEXT,
+                issuer_key_id TEXT
             )
             """
         )
@@ -87,13 +100,15 @@ def upsert_ca_mapping(crl_url: str, ca_name: str, ca_reg_number: Optional[str]) 
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO ca_mapping (crl_url, ca_name, ca_reg_number)
-            VALUES (?, ?, ?)
+            INSERT INTO ca_mapping (crl_url, ca_name, ca_reg_number, crl_number, issuer_key_id)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(crl_url) DO UPDATE SET
                 ca_name=excluded.ca_name,
-                ca_reg_number=excluded.ca_reg_number
+                ca_reg_number=excluded.ca_reg_number,
+                crl_number=excluded.crl_number,
+                issuer_key_id=excluded.issuer_key_id
             """,
-            (crl_url, ca_name, ca_reg_number),
+            (crl_url, ca_name, ca_reg_number, None, None),
         )
         conn.commit()
 
@@ -104,17 +119,21 @@ def bulk_upsert_ca_mapping(mapping: Dict[str, Dict[str, str]]) -> None:
     with get_conn() as conn:
         conn.executemany(
             """
-            INSERT INTO ca_mapping (crl_url, ca_name, ca_reg_number)
-            VALUES (?, ?, ?)
+            INSERT INTO ca_mapping (crl_url, ca_name, ca_reg_number, crl_number, issuer_key_id)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(crl_url) DO UPDATE SET
                 ca_name=excluded.ca_name,
-                ca_reg_number=excluded.ca_reg_number
+                ca_reg_number=excluded.ca_reg_number,
+                crl_number=excluded.crl_number,
+                issuer_key_id=excluded.issuer_key_id
             """,
             [
                 (
                     url,
                     info.get("name") or "Неизвестный УЦ",
                     info.get("reg_number"),
+                    None if info.get("crl_number") is None else str(info.get("crl_number")),
+                    info.get("issuer_key_id"),
                 )
                 for url, info in mapping.items()
             ],
@@ -125,13 +144,13 @@ def bulk_upsert_ca_mapping(mapping: Dict[str, Dict[str, str]]) -> None:
 def get_ca_by_crl_url(crl_url: str) -> Optional[Dict[str, str]]:
     with get_conn() as conn:
         cur = conn.execute(
-            "SELECT ca_name, ca_reg_number FROM ca_mapping WHERE crl_url=?",
+            "SELECT ca_name, ca_reg_number, crl_number, issuer_key_id FROM ca_mapping WHERE crl_url=?",
             (crl_url,),
         )
         row = cur.fetchone()
         if not row:
             return None
-        return {"name": row[0], "reg_number": row[1]}
+        return {"name": row[0], "reg_number": row[1], "crl_number": row[2], "issuer_key_id": row[3]}
 
 
 # ---- CRL state helpers ----

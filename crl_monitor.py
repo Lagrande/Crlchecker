@@ -55,6 +55,12 @@ class CRLMonitor:
             logger.info("🔍 CRL Monitor запущен в режиме DRY-RUN - уведомления НЕ будут отправляться в Telegram")
         else:
             logger.info("📱 CRL Monitor запущен в обычном режиме - уведомления будут отправляться в Telegram")
+        # Логируем флаг уведомлений о падениях скачивания CRL
+        try:
+            from config import NOTIFY_CRL_DOWNLOAD_FAIL
+            logger.info(f"NOTIFY_CRL_DOWNLOAD_FAIL={NOTIFY_CRL_DOWNLOAD_FAIL}")
+        except Exception:
+            pass
         # Метрики - используем общий реестр
         self.metric_checks_total = Counter('crl_checks_total', 'Total CRL check runs', registry=MetricsRegistry.registry)
         self.metric_processed_total = Counter('crl_processed_total', 'Processed CRL files', ['result'], registry=MetricsRegistry.registry)
@@ -435,6 +441,12 @@ class CRLMonitor:
                     size_mb = len(crl_data) / (1024 * 1024)
                 except Exception:
                     size_mb = None
+                # Логируем размер CRL (если включено)
+                if size_mb is not None and SHOW_CRL_SIZE_MB:
+                    try:
+                        logger.info(f"Размер CRL '{filename}': {size_mb:.2f} МБ ({url})")
+                    except Exception:
+                        pass
                 self.handle_crl_info(filename, crl_info, url, size_mb=size_mb)
                 
                 crl_processed = True
@@ -454,6 +466,34 @@ class CRLMonitor:
         if not crl_processed:
             error_msg = f"Не удалось обработать CRL '{filename}' ни с одного из {len(urls)} URL. Последняя ошибка: {last_error}"
             logger.error(error_msg)
+            # Отправим отдельное уведомление (если включено), с привязкой к УЦ на основе маппинга URL->УЦ
+            try:
+                from db import get_ca_by_crl_url
+                ca_name = None
+                ca_reg_number = None
+                crl_number = None
+                issuer_key_id = None
+                for u in urls:
+                    mapping = get_ca_by_crl_url(u)
+                    if mapping:
+                        ca_name = mapping.get('name')
+                        ca_reg_number = mapping.get('reg_number')
+                        crl_number = mapping.get('crl_number')
+                        issuer_key_id = mapping.get('issuer_key_id')
+                        break
+                single_url = urls[0] if urls else None
+                logger.warning(f"Отправка уведомления: CRL download failed для '{filename}', URL={single_url}, ca={ca_name}, reg={ca_reg_number}")
+                self.notifier.send_crl_download_failed(
+                    filename,
+                    urls,
+                    last_error,
+                    ca_name=ca_name,
+                    ca_reg_number=ca_reg_number,
+                    crl_number=crl_number,
+                    issuer_key_id=issuer_key_id,
+                )
+            except Exception as e:
+                logger.error(f"Ошибка отправки уведомления об ошибке скачивания CRL '{filename}': {e}")
             self.metric_processed_total.labels(result='failed_group').inc()
             self.metric_crl_status.labels(crl_name=filename, status='failed_group').set(1)
 
@@ -474,6 +514,10 @@ class CRLMonitor:
                 next_update = datetime.fromisoformat(next_update)
             except ValueError:
                 return False
+        
+        # Убеждаемся, что next_update имеет timezone
+        if next_update.tzinfo is None:
+            next_update = next_update.replace(tzinfo=MOSCOW_TZ)
         
         # Проверяем, что CRL действителен более 3 месяцев
         now = datetime.now(MOSCOW_TZ)
@@ -916,75 +960,6 @@ class CRLMonitor:
             self.weekly_stats = {}
             self.save_weekly_stats()
 
-
-    def process_crl_group(self, filename, urls):
-        """Обрабатывает группу URL-адресов, ведущих к одному и тому же файлу CRL."""
-        logger.debug(f"Обработка группы CRL '{filename}' по {len(urls)} URL.")
-        crl_processed = False
-        last_error = "Неизвестная ошибка"
-        last_url_tried = ""
-
-        for url in urls:
-            last_url_tried = url
-            try:
-                # 1. Загрузка CRL
-                crl_data = self.parser.download_crl(url)
-                if not crl_data:
-                    last_error = f"Не удалось загрузить CRL с {url}"
-                    continue
-
-                # 2. Парсинг CRL (может вернуть объект cryptography или dict)
-                parsed_object = self.parser.parse_crl(crl_data, crl_name=filename)
-                if not parsed_object:
-                    last_error = f"Не удалось распарсить CRL '{filename}' с {url}"
-                    continue
-
-                # 3. Преобразование результата в стандартизированный словарь (crl_info)
-                crl_info = None
-                if isinstance(parsed_object, dict):
-                    crl_info = parsed_object
-                    logger.info(f"Информация о CRL '{filename}' получена через резервный парсинг OpenSSL.")
-                else:
-                    crl_info = self.parser.get_crl_info(parsed_object)
-                
-                if not crl_info:
-                    last_error = f"Не удалось извлечь информацию из CRL '{filename}'"
-                    continue
-                
-                # 4. Проверка на Delta CRL
-                if crl_info.get('is_delta', False):
-                    last_error = f"CRL с {url} является Delta CRL и игнорируется."
-                    logger.debug(last_error)
-                    continue
-
-                # 5. Обработка, обновление состояния и отправка уведомлений
-                size_mb = None
-                try:
-                    size_mb = len(crl_data) / (1024 * 1024)
-                except Exception:
-                    size_mb = None
-                # Логируем размер CRL (если включено)
-                if size_mb is not None and SHOW_CRL_SIZE_MB:
-                    try:
-                        logger.info(f"Размер CRL '{filename}': {size_mb:.2f} МБ ({url})")
-                    except Exception:
-                        pass
-                self.handle_crl_info(filename, crl_info, url, size_mb=size_mb)
-                
-                crl_processed = True
-                logger.info(f"Успешно обработан CRL '{filename}' с {url}")
-                break # Успех, выходим из цикла по зеркалам
-                
-            except Exception as e:
-                last_error = f"Ошибка обработки CRL '{filename}' с {url}: {e}"
-                logger.error(last_error, exc_info=True)
-                continue
-
-        if not crl_processed:
-            error_msg = f"Не удалось обработать CRL '{filename}' ни с одного из {len(urls)} URL. Последняя ошибка: {last_error}"
-            logger.error(error_msg)
-
-    
 
     def setup_schedule(self):
         """Настройка расписания"""
