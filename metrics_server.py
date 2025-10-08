@@ -41,7 +41,6 @@ def check_system_health():
     
     # Проверяем метрики
     try:
-        from prometheus_client import generate_latest
         metrics_output = generate_latest(MetricsRegistry.registry)
         if not metrics_output:
             issues.append("No metrics available")

@@ -10,13 +10,15 @@ import subprocess
 from urllib.parse import urljoin, urlparse
 import re
 from datetime import datetime
+import time
+import hashlib
+import urllib3
 from config import VERIFY_TLS
 from utils import setup_logging
 
 # Отключаем предупреждения urllib3 при отключенной проверке TLS
 if not VERIFY_TLS:
     try:
-        import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     except Exception:
         pass
@@ -64,7 +66,6 @@ class CRLParser:
                     except requests.exceptions.RequestException as e:
                         logger.error(f"Ошибка загрузки CRL {url} (попытка {attempt}/{tries}): {e}")
                         if attempt < tries:
-                            import time
                             time.sleep(backoff)
                             backoff *= 2
                             continue
@@ -210,7 +211,6 @@ class CRLParser:
         crl_key_identifier = None
         
         try:
-            import hashlib
             # Получаем DER-кодированные данные CRL
             crl_der = crl.public_bytes(encoding=x509.Encoding.DER)
             # Вычисляем SHA-1 отпечаток CRL

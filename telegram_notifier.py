@@ -1,9 +1,10 @@
 # ./telegram_notifier.py
 import requests
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import time  # <-- Новый импорт
 import re    # <-- Новый импорт (на всякий случай, если Retry-After будет в body)
+import json
 from config import *
 
 logger = logging.getLogger(__name__)
@@ -122,7 +123,6 @@ class TelegramNotifier:
                      # Пример тела: {"ok":false,"error_code":429,"description":"Too Many Requests: retry after X","parameters":{"retry_after":X}}
                      if retry_after is None:
                          try:
-                             import json
                              error_data = response.json()
                              if 'parameters' in error_data and 'retry_after' in error_data['parameters']:
                                  retry_after = error_data['parameters']['retry_after']
@@ -183,7 +183,6 @@ class TelegramNotifier:
                 # Конвертируем в московское время
                 if dt.tzinfo is None:
                     # Если нет информации о часовом поясе, считаем UTC и конвертируем в Москву
-                    from datetime import timezone
                     dt = dt.replace(tzinfo=timezone.utc).astimezone(MOSCOW_TZ)
                 else:
                     # Конвертируем в московское время

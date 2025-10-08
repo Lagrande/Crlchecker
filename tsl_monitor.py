@@ -11,19 +11,19 @@ import re
 import time
 from collections import defaultdict
 import html # Для экранирования HTML
+import urllib3
 from config import *
 from db import init_db, bulk_upsert_ca_mapping
 from metrics import tsl_checks_total, tsl_fetch_status, tsl_active_cas, tsl_crl_urls
 from utils import parse_tsl_datetime, format_datetime_for_message, get_current_time_msk, setup_logging
+from telegram_notifier import TelegramNotifier
 
 # Отключаем предупреждения urllib3 при отключенной проверке TLS
 if not VERIFY_TLS:
     try:
-        import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     except Exception:
         pass
-from telegram_notifier import TelegramNotifier
 
 # Настройка логирования
 logging.basicConfig(
@@ -115,7 +115,6 @@ class TSLMonitor:
                 logger.error(f"Ошибка загрузки TSL.xml (попытка {attempt}/{tries}): {e}")
                 self.metric_tsl_fetch_status.labels(result='error').inc()
                 if attempt < tries:
-                    import time
                     time.sleep(backoff)
                     backoff *= 2
         return None
