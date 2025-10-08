@@ -13,6 +13,8 @@ from collections import defaultdict
 import html # Для экранирования HTML
 from config import *
 from db import init_db, bulk_upsert_ca_mapping
+from metrics import tsl_checks_total, tsl_fetch_status, tsl_active_cas, tsl_crl_urls
+from utils import parse_tsl_datetime, format_datetime_for_message, get_current_time_msk, setup_logging
 
 # Отключаем предупреждения urllib3 при отключенной проверке TLS
 if not VERIFY_TLS:
@@ -21,10 +23,7 @@ if not VERIFY_TLS:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     except Exception:
         pass
-from prometheus_client import Counter, Gauge
-from metrics_server import MetricsRegistry
 from telegram_notifier import TelegramNotifier
-from db import init_db, bulk_upsert_ca_mapping
 
 # Настройка логирования
 logging.basicConfig(
@@ -54,10 +53,10 @@ class TSLMonitor:
             logger.info("📱 TSL Monitor запущен в обычном режиме - уведомления будут отправляться в Telegram")
             
         # Метрики
-        self.metric_tsl_checks_total = Counter('tsl_checks_total', 'Total TSL check runs', registry=MetricsRegistry.registry)
-        self.metric_tsl_fetch_status = Counter('tsl_fetch_total', 'TSL fetch attempts', ['result'], registry=MetricsRegistry.registry)
-        self.metric_active_cas = Gauge('tsl_active_cas', 'Active CAs parsed from TSL', registry=MetricsRegistry.registry)
-        self.metric_crl_urls = Gauge('tsl_crl_urls', 'Unique CRL URLs extracted from TSL', registry=MetricsRegistry.registry)
+        self.metric_tsl_checks_total = tsl_checks_total
+        self.metric_tsl_fetch_status = tsl_fetch_status
+        self.metric_active_cas = tsl_active_cas
+        self.metric_crl_urls = tsl_crl_urls
 
     def load_state(self):
         """Загрузка состояния из файла"""
@@ -121,27 +120,6 @@ class TSLMonitor:
                     backoff *= 2
         return None
 
-    def _parse_datetime(self, date_str):
-        """Вспомогательная функция для парсинга даты из TSL."""
-        if not date_str:
-            return None
-        try:
-            if 'Z' in date_str:
-                return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-            else:
-                return datetime.fromisoformat(date_str)
-        except ValueError:
-            try:
-                if '.' in date_str and 'Z' in date_str:
-                    parts = date_str.split('.')
-                    if len(parts) == 2 and parts[1].endswith('Z'):
-                        cleaned_date_str = parts[0] + 'Z'
-                        dt_obj = datetime.strptime(cleaned_date_str, "%Y-%m-%dT%H:%M:%SZ")
-                        return dt_obj.replace(tzinfo=timezone.utc)
-            except ValueError:
-                pass
-        logger.warning(f"Не удалось распарсить дату: {date_str}")
-        return None
 
     def parse_tsl(self, xml_content):
         """Парсинг TSL.xml и извлечение действующих УЦ и их CRL"""
@@ -199,7 +177,7 @@ class TSLMonitor:
                         if status_type_elem is not None and status_type_elem.text == 'Действует':
                             date_elem = status.find('ДействуетС')
                             if date_elem is not None and date_elem.text:
-                                dt_obj = self._parse_datetime(date_elem.text)
+                                dt_obj = parse_tsl_datetime(date_elem.text)
                                 if dt_obj:
                                     effective_date_iso = dt_obj.isoformat()
                                     break
@@ -209,7 +187,7 @@ class TSLMonitor:
                             status_type_elem = main_status.find('Статус')
                             date_elem = main_status.find('ДействуетС')
                             if status_type_elem is not None and status_type_elem.text == 'Действует' and date_elem is not None and date_elem.text:
-                                dt_obj = self._parse_datetime(date_elem.text)
+                                dt_obj = parse_tsl_datetime(date_elem.text)
                                 if dt_obj:
                                     effective_date_iso = dt_obj.isoformat()
                     # Извлечение CRL - основное изменение здесь
@@ -483,21 +461,10 @@ class TSLMonitor:
         
         return changes
 
-    def format_datetime_for_message(self, dt_iso_str):
-        """Форматирование даты для сообщения"""
-        if not dt_iso_str:
-            return "Не указана"
-        try:
-            dt_obj = datetime.fromisoformat(dt_iso_str)
-            dt_msk = dt_obj.astimezone(MOSCOW_TZ)
-            return dt_msk.strftime('%d.%m.%Y %H:%M:%S')
-        except Exception as e:
-            logger.error(f"Ошибка форматирования даты {dt_iso_str}: {e}")
-            return dt_iso_str
 
     def send_notifications(self, changes, no_changes=False):
         """Отправка уведомлений о изменениях с экранированием HTML"""
-        now_msk = datetime.now(MOSCOW_TZ)
+        now_msk = get_current_time_msk()
         if no_changes:
             # Уведомления о том, что изменений нет, можно отключить
             pass

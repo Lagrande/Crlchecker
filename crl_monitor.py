@@ -11,9 +11,9 @@ from config import *
 from db import init_db, get_ca_by_crl_url
 from crl_parser import CRLParser
 from telegram_notifier import TelegramNotifier
-from prometheus_client import Counter, Gauge
-from metrics_server import MetricsRegistry
+from metrics import crl_checks_total, crl_processed_total, crl_unique_urls, crl_skipped_empty, crl_download_errors, crl_parse_errors, crl_status
 from db import weekly_details_bulk_upsert
+from utils import ensure_moscow_tz, parse_datetime_with_tz, get_current_time_msk, setup_logging
 
 # Настройка логирования
 logging.basicConfig(
@@ -29,15 +29,6 @@ logger = logging.getLogger(__name__)
 # Путь к файлу с URL CRL из TSL
 TSL_CRL_URLS_FILE = os.path.join(DATA_DIR, 'crl_urls_from_tsl.txt')
 
-def ensure_moscow_tz(dt):
-    """Убедиться, что datetime имеет московский часовой пояс."""
-    if dt and dt.tzinfo is None:
-        # Предполагаем, что naive datetime в UTC, затем конвертируем в Москву
-        dt = dt.replace(tzinfo=timezone.utc).astimezone(MOSCOW_TZ)
-    elif dt:
-        # Если уже есть tz, просто конвертируем в Москву
-        dt = dt.astimezone(MOSCOW_TZ)
-    return dt
 
 class CRLMonitor:
     def __init__(self):
@@ -61,16 +52,14 @@ class CRLMonitor:
             logger.info(f"NOTIFY_CRL_DOWNLOAD_FAIL={NOTIFY_CRL_DOWNLOAD_FAIL}")
         except Exception:
             pass
-        # Метрики - используем общий реестр
-        self.metric_checks_total = Counter('crl_checks_total', 'Total CRL check runs', registry=MetricsRegistry.registry)
-        self.metric_processed_total = Counter('crl_processed_total', 'Processed CRL files', ['result'], registry=MetricsRegistry.registry)
-        self.metric_unique_urls = Gauge('crl_unique_urls', 'Unique CRL URLs per run', registry=MetricsRegistry.registry)
-        self.metric_skipped_empty = Counter('crl_skipped_empty', 'Skipped empty CRLs with long validity', registry=MetricsRegistry.registry)
-        
-        # Новые метрики для отслеживания ошибок
-        self.metric_download_errors = Counter('crl_download_errors_total', 'CRL download errors', ['crl_name', 'error_type'], registry=MetricsRegistry.registry)
-        self.metric_parse_errors = Counter('crl_parse_errors_total', 'CRL parsing errors', ['crl_name', 'error_type'], registry=MetricsRegistry.registry)
-        self.metric_crl_status = Gauge('crl_status', 'CRL processing status', ['crl_name', 'status'], registry=MetricsRegistry.registry)
+        # Метрики - используем общие метрики
+        self.metric_checks_total = crl_checks_total
+        self.metric_processed_total = crl_processed_total
+        self.metric_unique_urls = crl_unique_urls
+        self.metric_skipped_empty = crl_skipped_empty
+        self.metric_download_errors = crl_download_errors
+        self.metric_parse_errors = crl_parse_errors
+        self.metric_crl_status = crl_status
         
         # Загружаем карту URL -> УЦ
         self.url_to_ca_map = self.load_url_to_ca_mapping()
@@ -308,19 +297,6 @@ class CRLMonitor:
         logger.info(f"Всего уникальных URL CRL ({mode_info}): {len(all_urls)}")
         return list(all_urls) # Возвращаем список URL
 
-    def _parse_datetime_with_tz(self, dt_str):
-        """
-        Парсинг строки даты/времени с учетом часового пояса.
-        Возвращает None в случае ошибки, а не текущее время.
-        """
-        if not dt_str:
-            return None # <-- Возвращаем None вместо datetime.now()
-        try:
-            dt = datetime.fromisoformat(dt_str)
-            return ensure_moscow_tz(dt)
-        except (ValueError, TypeError):
-            logger.warning(f"Не удалось распарсить дату: {dt_str}. Возвращено None.")
-            return None # <-- Возвращаем None в случае ошибки
 
     def run_check(self):
         """Основная проверка (высокоуровневая логика)."""
@@ -758,7 +734,7 @@ class CRLMonitor:
                 if time_left_hours <= threshold:
                     alert_key = f'alert_{threshold}h'
                     last_alert_str = self.state.get(crl_name, {}).get('last_alerts', {}).get(alert_key)
-                    last_alert_dt = self._parse_datetime_with_tz(last_alert_str)
+                    last_alert_dt = parse_datetime_with_tz(last_alert_str)
 
                     # Проверяем, нужно ли отправлять алерт (если он еще не отправлялся или прошло достаточно времени)
                     # Не отправляем повторно этот же порог, если уже отправляли ранее
@@ -878,7 +854,7 @@ class CRLMonitor:
             if next_update_str:
                 try:
                     # Используем _parse_datetime_with_tz для парсинга времени из состояния
-                    next_update_dt = self._parse_datetime_with_tz(next_update_str)
+                    next_update_dt = parse_datetime_with_tz(next_update_str)
                     # --- НОВАЯ ЛОГИКА: Проверка, не слишком ли старое ожидание ---
                     # Определим порог: если CRL ожидался больше месяца назад, не уведомляем.
                     one_month_ago = now_msk - timedelta(days=30)

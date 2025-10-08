@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlparse
 import re
 from datetime import datetime
 from config import VERIFY_TLS
+from utils import setup_logging
 
 # Отключаем предупреждения urllib3 при отключенной проверке TLS
 if not VERIFY_TLS:
