@@ -204,7 +204,7 @@ class TelegramNotifier:
         message = (
             f"⚠️ <b>ВНИМАНИЕ: CRL скоро истекает</b>\n"
             f"📁 Имя файла: <code>{crl_name}</code>\n"
-            f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный УЦ'}</b>\n"
+            f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный АУЦ'}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_reg_number or 'Неизвестный номер'}</code>\n"
             f"🔗 URL: <code>{crl_url}</code>\n"
             f"🔢 Серийный номер CRL: <code>{crl_number_formatted}</code>\n"
@@ -226,7 +226,7 @@ class TelegramNotifier:
         message = (
             f"🚨 <b>КРИТИЧНО: CRL истек</b>\n"
             f"📁 Имя файла: <code>{crl_name}</code>\n"
-            f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный УЦ'}</b>\n"
+            f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный АУЦ'}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_reg_number or 'Неизвестный номер'}</code>\n"
             f"🔗 URL: <code>{crl_url}</code>\n"
             f"🔢 Серийный номер CRL: <code>{crl_number_formatted}</code>\n"
@@ -273,7 +273,7 @@ class TelegramNotifier:
         message = (
             f"🆕 <b>Новая версия CRL опубликована</b>\n"
             f"📁 Имя файла: <code>{crl_name}</code>\n"
-            f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный УЦ'}</b>\n"
+            f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный АУЦ'}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_reg_number or 'Неизвестный номер'}</code>\n"
             f"🔗 URL: <code>{crl_url}</code>\n"
             f"🔢 Серийный номер CRL: <code>{crl_number_formatted}</code>\n"
@@ -302,7 +302,7 @@ class TelegramNotifier:
         message = (
             f"❌ <b>ОШИБКА: CRL не опубликован вовремя</b>\n"
             f"📁 Имя файла: <code>{crl_name}</code>\n"
-            f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный УЦ'}</b>\n"
+            f"🏢 Удостоверяющий центр: <b>{ca_name or 'Неизвестный АУЦ'}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_reg_number or 'Неизвестный номер'}</code>\n"
             f"🔗 URL: <code>{crl_url}</code>\n"
             f"📅 Ожидалось: {self.format_datetime(expected_update_time)}\n"
@@ -326,12 +326,13 @@ class TelegramNotifier:
 
     # --- Добавленные методы для уведомлений TSL ---
     def send_tsl_new_ca(self, ca_info):
-        """Уведомление о новом действующем УЦ"""
-        if not self.check_notification_enabled(NOTIFY_NEW_CAS, "о новых УЦ"):
+        """Уведомление о новом действующем АУЦ"""
+        if not self.check_notification_enabled(NOTIFY_NEW_CAS, "о новых АУЦ"):
             return
         now_msk = self.get_current_time_msk()
         message = (
-            f"🆕 <b>Новый действующий УЦ в TSL</b>\n"
+            f"🆕 <b>Новый действующий АУЦ</b>\n"
+            f"📦 Версия TSL: <b>{ca_info.get('tsl_version', 'Не указана')}</b>\n"
             f"🏢 Название: <b>{ca_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_info['reg_number']}</code>\n"
             f"📅 Дата аккредитации: {self.format_datetime(ca_info['effective_date'])}\n"
@@ -340,12 +341,13 @@ class TelegramNotifier:
         self.send_message(message)
 
     def send_tsl_date_change(self, ca_info, old_date, new_date):
-        """Уведомление об изменении даты аккредитации УЦ"""
+        """Уведомление об изменении даты аккредитации АУЦ"""
         if not self.check_notification_enabled(NOTIFY_DATE_CHANGES, "об изменениях дат"):
             return
         now_msk = self.get_current_time_msk()
         message = (
-            f"📆 <b>Изменение даты аккредитации УЦ</b>\n"
+            f"📆 <b>Изменение даты аккредитации АУЦ</b>\n"
+            f"📦 Версия TSL: <b>{ca_info.get('tsl_version', 'Не указана')}</b>\n"
             f"🏢 Название: <b>{ca_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_info['reg_number']}</code>\n"
             f"📅 Старая дата: {self.format_datetime(old_date)}\n"
@@ -355,7 +357,7 @@ class TelegramNotifier:
         self.send_message(message)
 
     def send_tsl_crl_change(self, ca_info, new_crls):
-        """Уведомление о новых или измененных CRL у действующих УЦ"""
+        """Уведомление о новых или измененных CRL у действующих АУЦ"""
         if not self.check_notification_enabled(NOTIFY_CRL_CHANGES, "об изменениях CRL"):
             return
         now_msk = self.get_current_time_msk()
@@ -364,7 +366,8 @@ class TelegramNotifier:
             crl_list_items.append(f"  • ... и еще {len(new_crls) - 10}")
         crl_list = "\n".join(crl_list_items)
         message = (
-            f"🔗 <b>Новые или измененные CRL у действующих УЦ</b>\n"
+            f"🔗 <b>Новые или измененные CRL у действующих АУЦ</b>\n"
+            f"📦 Версия TSL: <b>{ca_info.get('tsl_version', 'Не указана')}</b>\n"
             f"🏢 Название: <b>{ca_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_info['reg_number']}</code>\n"
             f"📄 Новые CRL:\n{crl_list}\n"
@@ -373,12 +376,13 @@ class TelegramNotifier:
         self.send_message(message)
 
     def send_tsl_status_change(self, ca_info, reason):
-        """Уведомление об изменении статуса УЦ"""
-        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса УЦ"):
+        """Уведомление об изменении статуса АУЦ"""
+        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса АУЦ"):
             return
         now_msk = self.get_current_time_msk()
         message = (
-            f"❌ <b>Изменение статуса УЦ</b>\n"
+            f"❌ <b>Изменение статуса АУЦ</b>\n"
+            f"📦 Версия TSL: <b>{ca_info.get('tsl_version', 'Не указана')}</b>\n"
             f"🏢 Название: <b>{ca_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_info['reg_number']}</code>\n"
             f"📝 Причина: {reason}\n"
@@ -387,12 +391,13 @@ class TelegramNotifier:
         self.send_message(message)
 
     def send_tsl_removed_ca(self, ca_info):
-        """Уведомление об удаленном УЦ"""
-        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса УЦ"):
+        """Уведомление об удаленном АУЦ"""
+        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса АУЦ"):
             return
         now_msk = self.get_current_time_msk()
         message = (
-            f"🗑️ <b>УЦ удален из списка</b>\n"
+            f"🗑️ <b>АУЦ удален из списка</b>\n"
+            f"📦 Версия TSL: <b>{ca_info.get('tsl_version', 'Не указана')}</b>\n"
             f"🏢 Название: <b>{ca_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_info['reg_number']}</code>\n"
             f"🏛️ ОГРН: <code>{ca_info.get('ogrn', 'Не указан')}</code>\n"
@@ -402,12 +407,13 @@ class TelegramNotifier:
         self.send_message(message)
 
     def send_tsl_name_change(self, change_info):
-        """Уведомление об изменении названия УЦ"""
-        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса УЦ"):
+        """Уведомление об изменении названия АУЦ"""
+        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса АУЦ"):
             return
         now_msk = self.get_current_time_msk()
         message = (
-            f"📝 <b>Изменение названия УЦ</b>\n"
+            f"📝 <b>Изменение названия АУЦ</b>\n"
+            f"📦 Версия TSL: <b>{change_info.get('tsl_version', 'Не указана')}</b>\n"
             f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
             f"📄 Было: <b>{change_info['old_name']}</b>\n"
             f"📄 Стало: <b>{change_info['new_name']}</b>\n"
@@ -416,12 +422,13 @@ class TelegramNotifier:
         self.send_message(message)
 
     def send_tsl_ogrn_change(self, change_info):
-        """Уведомление об изменении ОГРН УЦ"""
-        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса УЦ"):
+        """Уведомление об изменении ОГРН АУЦ"""
+        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса АУЦ"):
             return
         now_msk = self.get_current_time_msk()
         message = (
-            f"🏛️ <b>Изменение ОГРН УЦ</b>\n"
+            f"🏛️ <b>Изменение ОГРН АУЦ</b>\n"
+            f"📦 Версия TSL: <b>{change_info.get('tsl_version', 'Не указана')}</b>\n"
             f"🏢 Название: <b>{change_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
             f"📄 Было: <code>{change_info['old_ogrn']}</code>\n"
@@ -458,7 +465,8 @@ class TelegramNotifier:
 
         message = (
             f"➕ <b>Добавлены новые CRL</b>\n"
-            f"🏢 УЦ: <b>{change_info['name']}</b>\n"
+            f"📦 Версия TSL: <b>{change_info.get('tsl_version', 'Не указана')}</b>\n"
+            f"🏢 АУЦ: <b>{change_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
             f"🔢 Серийный номер CRL: <code>{crl_number_formatted}</code>\n"
             f"🔑 Идентификатор ключа издателя: <code>{issuer_key_id}</code>\n"
@@ -482,7 +490,8 @@ class TelegramNotifier:
         crl_list = "\n".join([f"• <code>{crl}</code>" for crl in change_info['crls']])
         message = (
             f"➖ <b>Удалены CRL</b>\n"
-            f"🏢 УЦ: <b>{change_info['name']}</b>\n"
+            f"📦 Версия TSL: <b>{change_info.get('tsl_version', 'Не указана')}</b>\n"
+            f"🏢 АУЦ: <b>{change_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
             f"📋 Удаленные CRL:\n{crl_list}\n"
             f"{self.get_check_time_string()}"
@@ -498,7 +507,8 @@ class TelegramNotifier:
         new_urls = "\n".join([f"• <code>{url}</code>" for url in change_info['new_urls']])
         message = (
             f"🔄 <b>Изменены адреса CRL</b>\n"
-            f"🏢 УЦ: <b>{change_info['name']}</b>\n"
+            f"📦 Версия TSL: <b>{change_info.get('tsl_version', 'Не указана')}</b>\n"
+            f"🏢 АУЦ: <b>{change_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
             f"📄 Было:\n{old_urls}\n"
             f"📄 Стало:\n{new_urls}\n"
@@ -508,12 +518,13 @@ class TelegramNotifier:
 
     def send_tsl_other_change(self, change_info):
         """Уведомление о других изменениях в TSL"""
-        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса УЦ"):
+        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса АУЦ"):
             return
         now_msk = self.get_current_time_msk()
         message = (
-            f"📋 <b>Другие изменения в TSL</b>\n"
-            f"🏢 УЦ: <b>{change_info['name']}</b>\n"
+            f"📋 <b>Другие изменения в файле TSL</b>\n"
+            f"📦 Версия TSL: <b>{change_info.get('tsl_version', 'Не указана')}</b>\n"
+            f"🏢 АУЦ: <b>{change_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
             f"📝 Поле: <b>{change_info['field']}</b>\n"
             f"📄 Было: <code>{change_info['old_value']}</code>\n"
@@ -523,13 +534,14 @@ class TelegramNotifier:
         self.send_message(message)
 
     def send_tsl_short_name_change(self, change_info):
-        """Уведомление об изменении краткого названия УЦ"""
-        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса УЦ"):
+        """Уведомление об изменении краткого названия АУЦ"""
+        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса АУЦ"):
             return
         now_msk = self.get_current_time_msk()
         message = (
-            f"📝 <b>Изменение краткого названия УЦ</b>\n"
-            f"🏢 УЦ: <b>{change_info['name']}</b>\n"
+            f"📝 <b>Изменение краткого названия АУЦ</b>\n"
+            f"📦 Версия TSL: <b>{change_info.get('tsl_version', 'Не указана')}</b>\n"
+            f"🏢 АУЦ: <b>{change_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
             f"📄 Было: <b>{change_info['old_short_name']}</b>\n"
             f"📄 Стало: <b>{change_info['new_short_name']}</b>\n"
@@ -538,12 +550,13 @@ class TelegramNotifier:
         self.send_message(message)
 
     def send_tsl_inn_change(self, change_info):
-        """Уведомление об изменении ИНН УЦ"""
-        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса УЦ"):
+        """Уведомление об изменении ИНН АУЦ"""
+        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса АУЦ"):
             return
         now_msk = self.get_current_time_msk()
         message = (
-            f"🏛️ <b>Изменение ИНН УЦ</b>\n"
+            f"🏛️ <b>Изменение ИНН АУЦ</b>\n"
+            f"📦 Версия TSL: <b>{change_info.get('tsl_version', 'Не указана')}</b>\n"
             f"🏢 Название: <b>{change_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
             f"📄 Было: <code>{change_info['old_inn']}</code>\n"
@@ -553,12 +566,13 @@ class TelegramNotifier:
         self.send_message(message)
 
     def send_tsl_email_change(self, change_info):
-        """Уведомление об изменении email УЦ"""
-        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса УЦ"):
+        """Уведомление об изменении email АУЦ"""
+        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса АУЦ"):
             return
         now_msk = self.get_current_time_msk()
         message = (
-            f"📧 <b>Изменение email УЦ</b>\n"
+            f"📧 <b>Изменение email АУЦ</b>\n"
+            f"📦 Версия TSL: <b>{change_info.get('tsl_version', 'Не указана')}</b>\n"   
             f"🏢 Название: <b>{change_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
             f"📄 Было: <code>{change_info['old_email']}</code>\n"
@@ -568,12 +582,13 @@ class TelegramNotifier:
         self.send_message(message)
 
     def send_tsl_website_change(self, change_info):
-        """Уведомление об изменении веб-сайта УЦ"""
-        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса УЦ"):
+        """Уведомление об изменении веб-сайта АУЦ"""
+        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса АУЦ"):
             return
         now_msk = self.get_current_time_msk()
         message = (
-            f"🌐 <b>Изменение веб-сайта УЦ</b>\n"
+            f"🌐 <b>Изменение веб-сайта АУЦ</b>\n"
+            f"📦 Версия TSL: <b>{change_info.get('tsl_version', 'Не указана')}</b>\n"
             f"🏢 Название: <b>{change_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
             f"📄 Было: <code>{change_info['old_website']}</code>\n"
@@ -583,12 +598,13 @@ class TelegramNotifier:
         self.send_message(message)
 
     def send_tsl_registry_url_change(self, change_info):
-        """Уведомление об изменении URL реестра сертификатов УЦ"""
-        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса УЦ"):
+        """Уведомление об изменении URL реестра сертификатов АУЦ"""
+        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса АУЦ"):
             return
         now_msk = self.get_current_time_msk()
         message = (
-            f"📋 <b>Изменение URL реестра сертификатов УЦ</b>\n"
+            f"📋 <b>Изменение URL реестра сертификатов АУЦ</b>\n"
+            f"📦 Версия TSL: <b>{change_info.get('tsl_version', 'Не указана')}</b>\n"
             f"🏢 Название: <b>{change_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
             f"📄 Было: <code>{change_info['old_registry_url']}</code>\n"
@@ -598,12 +614,13 @@ class TelegramNotifier:
         self.send_message(message)
 
     def send_tsl_address_change(self, change_info):
-        """Уведомление об изменении адреса УЦ"""
-        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса УЦ"):
+        """Уведомление об изменении адреса АУЦ"""
+        if not self.check_notification_enabled(NOTIFY_STATUS_CHANGES, "об изменениях статуса АУЦ"):
             return
         now_msk = self.get_current_time_msk()
         message = (
-            f"📍 <b>Изменение адреса УЦ</b>\n"
+            f"📍 <b>Изменение адреса АУЦ</b>\n"
+            f"📦 Версия TSL: <b>{change_info.get('tsl_version', 'Не указана')}</b>\n"
             f"🏢 Название: <b>{change_info['name']}</b>\n"
             f"🔢 Реестровый номер: <code>{change_info['reg_number']}</code>\n"
             f"📄 Было: <code>{change_info['old_address']}</code>\n"
@@ -628,7 +645,7 @@ class TelegramNotifier:
         logger.warning(f"Отправка уведомления о провале скачивания CRL: crl_name={crl_name}, urls={tried_urls}, ca={ca_name}, reg={ca_reg_number}")
         message = (
             f"❗ <b>Не удалось скачать CRL — CRL не существует</b>\n"
-            f"🏢 УЦ: <b>{ca_name or 'Неизвестный УЦ'}</b>\n"
+            f"🏢 АУЦ: <b>{ca_name or 'Неизвестный АУЦ'}</b>\n"
             f"🔢 Реестровый номер: <code>{ca_reg_number or 'Неизвестен'}</code>\n"
             f"📁 Имя файла: <code>{crl_name}</code>\n"
             f"🔗 URL:\n{url_list}\n"

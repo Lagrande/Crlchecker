@@ -42,9 +42,11 @@ TSL_CRL_URLS_FILE = os.path.join(DATA_DIR, 'crl_urls_from_tsl.txt') # Новый
 # Используем значение из config.py: TSL_CHECK_INTERVAL_HOURS
 
 class TSLMonitor:
-    def __init__(self):
+    def __init__(self, tsl_file: str = None):
         self.notifier = TelegramNotifier()
         self.state = self.load_state()
+        # Путь к локальному файлу TSL для тестов (если задан через CLI)
+        self.tsl_file = tsl_file
         
         # Логируем режим работы
         if DRY_RUN:
@@ -119,6 +121,22 @@ class TSLMonitor:
                     backoff *= 2
         return None
 
+    def load_tsl_from_file(self, path):
+        """Загрузка TSL.xml из локального файла (возвращает bytes или None)."""
+        try:
+            if not path:
+                return None
+            if not os.path.exists(path):
+                logger.error(f"Локальный файл TSL не найден: {path}")
+                return None
+            with open(path, 'rb') as f:
+                content = f.read()
+                logger.info(f"TSL.xml загружен из локального файла: {path}, размер: {len(content)} байт")
+                return content
+        except Exception as e:
+            logger.error(f"Ошибка чтения локального файла TSL '{path}': {e}")
+            return None
+
 
     def parse_tsl(self, xml_content):
         """Парсинг TSL.xml и извлечение действующих УЦ и их CRL"""
@@ -130,6 +148,30 @@ class TSLMonitor:
             if isinstance(xml_content, bytes):
                 xml_content = xml_content.decode('utf-8')
             root = ET.fromstring(xml_content)
+            # Извлекаем версию TSL: сначала как текст в элементах, затем fallback на атрибуты у корня
+            tsl_version = None
+            try:
+                # Поиск текстового значения версии в узлах
+                version_nodes = [
+                    root.find('.//версия'),
+                    root.find('.//Версия'),
+                    root.find('.//ВЕРСИЯ'),
+                ]
+                for node in version_nodes:
+                    if node is not None and node.text and node.text.strip():
+                        tsl_version = node.text.strip()
+                        break
+                # Fallback: берем атрибуты корневого элемента, если текст не найден
+                if not tsl_version:
+                    tsl_version = (
+                        root.attrib.get('Версия') or
+                        root.attrib.get('версия') or
+                        root.attrib.get('Version') or
+                        root.attrib.get('version')
+                    )
+            except Exception:
+                tsl_version = None
+            self.current_tsl_version = tsl_version
             # Подготовим фильтры: приоритет — по ОГРН, иначе — по префиксам реестровых номеров
             ogrn_filters = None
             numeric_filters = None
@@ -242,6 +284,7 @@ class TSLMonitor:
                             'effective_date': effective_date_iso,
                             'crl_urls': list(ca_crl_urls), # Сохраняем CRL для этого УЦ
                             # Доп. поля из TSL (best-effort)
+                            'tsl_version': tsl_version,
                             'ca_tool': ca_tool,
                             'ca_tool_class': ca_tool_class,
                             'cert_subject': cert_subject,
@@ -471,65 +514,81 @@ class TSLMonitor:
         # --- Отправка уведомлений для TSL ---
         if changes['new_cas'] and NOTIFY_NEW_CAS:
             for ca in changes['new_cas']:
+                ca['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_new_ca(ca)
         
         if changes['removed_cas'] and NOTIFY_REMOVED_CAS:
             for ca in changes['removed_cas']:
+                ca['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_removed_ca(ca)
         
         if changes['name_changes'] and NOTIFY_NAME_CHANGES:
             for change in changes['name_changes']:
+                change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_name_change(change)
         
         if changes['short_name_changes'] and NOTIFY_SHORT_NAME_CHANGES:
             for change in changes['short_name_changes']:
+                change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_short_name_change(change)
         
         if changes['ogrn_changes'] and NOTIFY_OGRN_CHANGES:
             for change in changes['ogrn_changes']:
+                change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_ogrn_change(change)
         
         if changes['inn_changes'] and NOTIFY_INN_CHANGES:
             for change in changes['inn_changes']:
+                change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_inn_change(change)
         
         if changes['email_changes'] and NOTIFY_EMAIL_CHANGES:
             for change in changes['email_changes']:
+                change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_email_change(change)
         
         if changes['website_changes'] and NOTIFY_WEBSITE_CHANGES:
             for change in changes['website_changes']:
+                change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_website_change(change)
         
         if changes['registry_url_changes'] and NOTIFY_REGISTRY_URL_CHANGES:
             for change in changes['registry_url_changes']:
+                change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_registry_url_change(change)
         
         if changes['address_changes'] and NOTIFY_ADDRESS_CHANGES:
             for change in changes['address_changes']:
+                change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_address_change(change)
         
         if changes['date_changes'] and NOTIFY_DATE_CHANGES:
             for change in changes['date_changes']:
+                change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_date_change(change, change['old_date'], change['new_date'])
         
         if changes['crl_changes'] and NOTIFY_CRL_CHANGES:
             for change in changes['crl_changes']:
                 if change['action'] == 'added':
+                    change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                     self.notifier.send_tsl_crl_added(change)
                 elif change['action'] == 'removed':
+                    change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                     self.notifier.send_tsl_crl_removed(change)
         
         if changes['crl_url_changes'] and NOTIFY_CRL_CHANGES:
             for change in changes['crl_url_changes']:
+                change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_crl_url_change(change)
         
         if changes['status_changes'] and NOTIFY_STATUS_CHANGES:
             for change in changes['status_changes']:
+                change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_status_change(change, change['reason'])
         
         if changes['other_changes'] and NOTIFY_OTHER_CHANGES:
             for change in changes['other_changes']:
+                change['tsl_version'] = getattr(self, 'current_tsl_version', None)
                 self.notifier.send_tsl_other_change(change)
 
     def run_check(self):
@@ -541,7 +600,16 @@ class TSLMonitor:
             except Exception as e:
                 logger.error(f"Не удалось инициализировать БД: {e}")
             self.metric_tsl_checks_total.inc()
-            xml_content = self.download_tsl()
+            # Если передан локальный файл TSL, используем его, иначе скачиваем
+            xml_content = None
+            if self.tsl_file:
+                # Разрешаем относительный путь в /app/data
+                candidate = self.tsl_file
+                if not os.path.isabs(candidate):
+                    candidate = os.path.join(DATA_DIR, candidate)
+                xml_content = self.load_tsl_from_file(candidate)
+            if not xml_content:
+                xml_content = self.download_tsl()
             if not xml_content:
                 return
             current_state, all_crl_urls, url_to_ca_map = self.parse_tsl(xml_content)
@@ -596,7 +664,13 @@ class TSLMonitor:
                 time.sleep(60)
 
 if __name__ == "__main__":
-    monitor = TSLMonitor()
+    # Поддержка аргумента --tsl-file=<path>
+    tsl_file_arg = None
+    for arg in sys.argv:
+        if arg.startswith('--tsl-file='):
+            tsl_file_arg = arg.split('=', 1)[1].strip() or None
+            break
+    monitor = TSLMonitor(tsl_file=tsl_file_arg)
     # Проверяем наличие флага --once в аргументах командной строки
     if '--once' in sys.argv:
         # Если флаг есть, выполняем только одну проверку и выходим.
