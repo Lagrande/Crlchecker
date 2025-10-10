@@ -113,7 +113,7 @@ services:
       - NOTIFY_CRL_DOWNLOAD_FAIL=true
       - NOTIFY_WEEKLY_STATS=false        # Еженедельная статистика
     volumes:
-      - ./data:/app/data
+      - ./data1:/app/data
     restart: unless-stopped
     expose:
       - "8000" # доступно только внутри docker-сети (для дашборда/прометея)
