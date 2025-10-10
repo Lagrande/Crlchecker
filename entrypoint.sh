@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # Создаем директорию для данных
 mkdir -p /app/data/crl_cache
@@ -92,7 +92,7 @@ cleanup() {
 }
 
 # Перехватываем сигналы завершения
-trap cleanup SIGTERM SIGINT
+trap cleanup TERM INT
 
 echo "All monitors started. Waiting..."
 # Ждем завершения фоновых процессов

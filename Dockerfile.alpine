@@ -1,0 +1,58 @@
+# ./Dockerfile.alpine
+# Lightweight Alpine-based image with temporary build deps
+
+FROM python:3.12-alpine
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Runtime dependencies only:
+# - tzdata, ca-certificates: correct time/SSL trust
+# - openssl: CLI used for fallback CRL parsing
+# - sqlite-libs: sqlite3 runtime for Python stdlib module
+RUN apk add --no-cache \
+    tzdata \
+    curl \
+    wget \
+    jq \
+    ca-certificates \
+    openssl \
+    sqlite-libs
+
+WORKDIR /app
+
+# Create a virtual package for build deps to remove later
+# Build dependencies used for compiling wheels:
+# - build-base, musl-dev: C toolchain for native extensions
+# - libffi-dev, openssl-dev: cryptography deps
+# - cargo, rust: cryptography>=41 requires Rust to build on Alpine
+# - sqlite-dev: compile against sqlite if needed by some wheels
+# NOTE: We remove this layer after pip install to keep the image small
+RUN apk add --no-cache --virtual .build-deps \
+    build-base \
+    musl-dev \
+    libffi-dev \
+    openssl-dev \
+    cargo \
+    rust \
+    sqlite-dev
+
+COPY requirements.txt .
+# Prefer prebuilt wheels when available, fall back to build
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir --prefer-binary -r requirements.txt && \
+    apk del .build-deps
+
+# Copy app source
+COPY . .
+
+# Install custom CA if present
+RUN mkdir -p /usr/local/share/ca-certificates/extra && \
+    if [ -f certs/uc_kadastr_ru_cert.pem ]; then \
+      cp certs/uc_kadastr_ru_cert.pem /usr/local/share/ca-certificates/extra/uc_kadastr_ru_cert.crt; \
+      update-ca-certificates || true; \
+    fi
+
+# Ensure entrypoint is executable
+RUN chmod +x entrypoint.sh
+
+ENTRYPOINT ["./entrypoint.sh"]
