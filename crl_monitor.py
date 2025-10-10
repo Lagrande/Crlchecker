@@ -49,7 +49,7 @@ class CRLMonitor:
         # Логируем флаг уведомлений о падениях скачивания CRL
         try:
             from config import NOTIFY_CRL_DOWNLOAD_FAIL
-            logger.info(f"NOTIFY_CRL_DOWNLOAD_FAIL={NOTIFY_CRL_DOWNLOAD_FAIL}")
+            logger.info(f"Уведомление об ошибках скачивания CRL={NOTIFY_CRL_DOWNLOAD_FAIL}")
         except Exception:
             pass
         # Метрики - используем общие метрики
