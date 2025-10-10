@@ -2,7 +2,7 @@ services:
   crlchecker:
     build:
       context: .
-      dockerfile: Dockerfile.alpine
+      # dockerfile: Dockerfile.alpine
     container_name: crlchecker
     environment:
       - TZ=Europe/Moscow
