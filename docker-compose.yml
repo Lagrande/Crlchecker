@@ -2,8 +2,67 @@ services:
   crlchecker:
     build:
       context: .
-      # dockerfile: Dockerfile.alpine
     container_name: crlchecker
+    environment:
+      - TZ=Europe/Moscow
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - FNS_ONLY=false
+      - VERIFY_TLS=false
+      - METRICS_PORT=8000
+      # Новые опции
+      - SHOW_CRL_SIZE_MB=true
+      - DB_ENABLED=true
+      - DB_PATH=/app/data/crlchecker.db
+      - DRY_RUN=false                    # Режим Dry-run (без отправки уведомлений в Telegram)
+      # Кастомные источники CRL (CDP) через запятую
+      - CDP_SOURCES=${CDP_SOURCES:-}
+      # Перечень реестровых номеров через запятую; пусто — без фильтра
+      # - TSL_REGISTRY_NUMBERS=81
+      # Перечень ОГРН через запятую; если задан, используется фильтр по ОГРН
+      # - TSL_OGRN_LIST=1047707030513
+      # 
+      # Примеры отключения уведомлений (раскомментируйте нужные строки):
+      # - NOTIFY_EMAIL_CHANGES=false        # Отключить уведомления об изменениях email
+      # - NOTIFY_WEBSITE_CHANGES=false      # Отключить уведомления об изменениях веб-сайтов
+      # - NOTIFY_ADDRESS_CHANGES=false      # Отключить уведомления об изменениях адресов
+      # - NOTIFY_SHORT_NAME_CHANGES=false   # Отключить уведомления об изменениях кратких названий
+      # Уведомления TSL - основные
+      - NOTIFY_NEW_CAS=true              # Новые УЦ в TSL
+      - NOTIFY_REMOVED_CAS=true          # Удаленные УЦ из TSL
+      - NOTIFY_DATE_CHANGES=true         # Изменения дат аккредитации
+      - NOTIFY_CRL_CHANGES=true          # Изменения в списках CRL
+      - NOTIFY_STATUS_CHANGES=true       # Изменения статуса УЦ
+      # Уведомления TSL - детальные изменения
+      - NOTIFY_NAME_CHANGES=true         # Изменения названий УЦ
+      - NOTIFY_SHORT_NAME_CHANGES=true   # Изменения кратких названий
+      - NOTIFY_OGRN_CHANGES=true         # Изменения ОГРН
+      - NOTIFY_INN_CHANGES=true          # Изменения ИНН
+      - NOTIFY_EMAIL_CHANGES=true        # Изменения email
+      - NOTIFY_WEBSITE_CHANGES=true      # Изменения веб-сайтов
+      - NOTIFY_REGISTRY_URL_CHANGES=true # Изменения URL реестров
+      - NOTIFY_ADDRESS_CHANGES=true      # Изменения адресов
+      - NOTIFY_PAK_CHANGES=true          # Изменения ПАК
+      - NOTIFY_CERTIFICATE_CHANGES=true  # Изменения сертификатов
+      - NOTIFY_OTHER_CHANGES=true        # Прочие изменения
+      # Уведомления CRL
+      - NOTIFY_EXPIRING_CRL=true         # Истекающие CRL
+      - NOTIFY_EXPIRED_CRL=false         # Истекшие CRL
+      - NOTIFY_NEW_CRL=true              # Новые версии CRL
+      - NOTIFY_MISSED_CRL=true           # Пропущенные CRL
+      - NOTIFY_CRL_DOWNLOAD_FAIL=true
+      - NOTIFY_WEEKLY_STATS=false        # Еженедельная статистика
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    expose:
+      - "8000" # доступно только внутри docker-сети (для дашборда/прометея)
+
+  crlchecker-alpine:
+    build:
+      context: .
+      dockerfile: Dockerfile.alpine
+    container_name: crlchecker-alpine
     environment:
       - TZ=Europe/Moscow
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
