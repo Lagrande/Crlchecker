@@ -262,7 +262,7 @@ services:
 ```
 ```yaml
 services:
-    image: isudarikov/crlchecker
+    image: isudarikov/crlchecker:alpine
     container_name: crlchecker
     environment:
       - TZ=Europe/Moscow
