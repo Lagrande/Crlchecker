@@ -1,7 +1,7 @@
 import os
 import sqlite3
 from contextlib import contextmanager
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 import json
 
 from config import DB_PATH, DATA_DIR
@@ -83,6 +83,45 @@ def init_db():
             )
             """
         )
+
+        # --- Новые таблицы для версий и диффов TSL ---
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tsl_versions (
+                version TEXT PRIMARY KEY,
+                date TEXT,
+                root_schema_location TEXT,
+                xml_sha256 TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tsl_ca_snapshot (
+                version TEXT NOT NULL,
+                entity_key TEXT NOT NULL,
+                ca_reg_number TEXT,
+                ca_id TEXT,
+                snapshot_json TEXT NOT NULL,
+                PRIMARY KEY (version, entity_key)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tsl_diffs (
+                from_version TEXT,
+                to_version TEXT,
+                entity_type TEXT,
+                entity_id TEXT,
+                path TEXT,
+                old_value TEXT,
+                new_value TEXT,
+                PRIMARY KEY (to_version, entity_type, entity_id, path)
+            )
+            """
+        )
         conn.commit()
 
 
@@ -127,16 +166,7 @@ def bulk_upsert_ca_mapping(mapping: Dict[str, Dict[str, str]]) -> None:
                 crl_number=excluded.crl_number,
                 issuer_key_id=excluded.issuer_key_id
             """,
-            [
-                (
-                    url,
-                    info.get("name") or "Неизвестный УЦ",
-                    info.get("reg_number"),
-                    None if info.get("crl_number") is None else str(info.get("crl_number")),
-                    info.get("issuer_key_id"),
-                )
-                for url, info in mapping.items()
-            ],
+            [(u, v.get("name"), v.get("reg_number"), v.get("crl_number"), v.get("issuer_key_id")) for u, v in mapping.items()],
         )
         conn.commit()
 
@@ -283,5 +313,75 @@ def bulk_upsert_crl_state(state: Dict[str, Dict[str, Any]]) -> None:
             rows,
         )
         conn.commit()
+
+
+# ---- TSL versioning helpers ----
+
+def tsl_versions_get_last() -> Optional[Tuple[str, Dict[str, Any]]]:
+    with get_conn() as conn:
+        cur = conn.execute("SELECT version, date, root_schema_location, xml_sha256, created_at FROM tsl_versions ORDER BY created_at DESC LIMIT 1")
+        row = cur.fetchone()
+        if not row:
+            return None
+        return row[0], {
+            'date': row[1],
+            'root_schema_location': row[2],
+            'xml_sha256': row[3],
+            'created_at': row[4],
+        }
+
+def tsl_versions_upsert(version: str, date: Optional[str], root_schema_location: Optional[str], xml_sha256: Optional[str]) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO tsl_versions (version, date, root_schema_location, xml_sha256, created_at)
+            VALUES (?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(version) DO UPDATE SET
+                date=excluded.date,
+                root_schema_location=excluded.root_schema_location,
+                xml_sha256=excluded.xml_sha256
+            """,
+            (version, date, root_schema_location, xml_sha256),
+        )
+
+def tsl_ca_snapshots_get(version: str) -> Dict[str, Dict[str, Any]]:
+    with get_conn() as conn:
+        cur = conn.execute("SELECT entity_key, snapshot_json FROM tsl_ca_snapshot WHERE version=?", (version,))
+        res: Dict[str, Dict[str, Any]] = {}
+        for row in cur.fetchall():
+            key = row[0]
+            try:
+                res[key] = json.loads(row[1])
+            except Exception:
+                res[key] = {}
+        return res
+
+def tsl_ca_snapshots_write(version: str, snapshots: Dict[str, Dict[str, Any]]) -> None:
+    if not snapshots:
+        return
+    with get_conn() as conn:
+        conn.executemany(
+            """
+            INSERT INTO tsl_ca_snapshot (version, entity_key, ca_reg_number, ca_id, snapshot_json)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(version, entity_key) DO UPDATE SET
+                snapshot_json=excluded.snapshot_json,
+                ca_reg_number=excluded.ca_reg_number,
+                ca_id=excluded.ca_id
+            """,
+            [(version, k, k, None, json.dumps(v, ensure_ascii=False)) for k, v in snapshots.items()],
+        )
+
+def tsl_diffs_write(from_version: Optional[str], to_version: str, diffs: list) -> None:
+    if not diffs:
+        return
+    with get_conn() as conn:
+        conn.executemany(
+            """
+            INSERT OR REPLACE INTO tsl_diffs (from_version, to_version, entity_type, entity_id, path, old_value, new_value)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            diffs,
+        )
 
 

@@ -14,6 +14,7 @@ import html # Для экранирования HTML
 import urllib3
 from config import *
 from db import init_db, bulk_upsert_ca_mapping
+from db import tsl_versions_get_last, tsl_versions_upsert, tsl_ca_snapshots_get, tsl_ca_snapshots_write, tsl_diffs_write
 from metrics import tsl_checks_total, tsl_fetch_status, tsl_active_cas, tsl_crl_urls
 from utils import parse_tsl_datetime, format_datetime_for_message, get_current_time_msk, setup_logging
 from telegram_notifier import TelegramNotifier
@@ -141,13 +142,13 @@ class TSLMonitor:
     def parse_tsl(self, xml_content):
         """Парсинг TSL.xml и извлечение действующих УЦ и их CRL"""
         if not xml_content:
-            return {}, set()
+            return {}, set(), {}
         all_crl_urls = set() # Для хранения всех уникальных CRL URL
         active_cas = {}
         try:
-            if isinstance(xml_content, bytes):
-                xml_content = xml_content.decode('utf-8')
-            root = ET.fromstring(xml_content)
+            raw_bytes = xml_content if isinstance(xml_content, (bytes, bytearray)) else xml_content.encode('utf-8')
+            xml_text = raw_bytes.decode('utf-8', errors='ignore')
+            root = ET.fromstring(xml_text)
             # Извлекаем версию TSL: сначала как текст в элементах, затем fallback на атрибуты у корня
             tsl_version = None
             try:
@@ -315,6 +316,95 @@ class TSLMonitor:
             
             logger.info(f"Найдено {len(active_cas)} действующих УЦ")
             logger.info(f"Извлечено {len(all_crl_urls)} уникальных URL CRL из TSL")
+
+            # --- Persist TSL version root/meta and CA snapshots + compute diffs ---
+            try:
+                import hashlib
+                schema_loc = root.attrib.get('{http://www.w3.org/2001/XMLSchema-instance}noNamespaceSchemaLocation')
+                xml_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+                current_version = tsl_version or 'unknown'
+                current_date_node = root.find('.//Дата')
+                current_date = current_date_node.text.strip() if (current_date_node is not None and current_date_node.text) else None
+                tsl_versions_upsert(current_version, current_date, schema_loc, xml_sha256)
+
+                # Build CA snapshots as compact JSON per CA keyed by reg_number
+                snapshots = {}
+                for reg_number, ca in active_cas.items():
+                    snapshots[reg_number] = {
+                        'name': ca.get('name'),
+                        'effective_date': ca.get('effective_date'),
+                        'crl_urls': sorted(ca.get('crl_urls') or []),
+                        'ca_tool': ca.get('ca_tool'),
+                        'ca_tool_class': ca.get('ca_tool_class'),
+                        'cert_subject': ca.get('cert_subject'),
+                        'cert_issuer': ca.get('cert_issuer'),
+                        'cert_serial': ca.get('cert_serial'),
+                        'cert_validity': ca.get('cert_validity'),
+                        'cert_fingerprint': ca.get('cert_fingerprint'),
+                        'crl_number': ca.get('crl_number'),
+                        'issuer_key_id': ca.get('issuer_key_id'),
+                    }
+
+                # Load previous version (if any) and compute diffs
+                prev = tsl_versions_get_last()
+                prev_version = None
+                prev_snaps = {}
+                if prev and prev[0] != current_version:
+                    prev_version = prev[0]
+                    prev_snaps = tsl_ca_snapshots_get(prev_version)
+
+                # write current snapshots
+                tsl_ca_snapshots_write(current_version, snapshots)
+
+                diffs = []
+                if prev_version:
+                    # Root-level diffs: /Версия, /Дата, /@xsi:noNamespaceSchemaLocation
+                    def _add_root(path, old_val, new_val):
+                        if (old_val or new_val) and (old_val != new_val):
+                            diffs.append((prev_version, current_version, 'root', 'root', path, old_val, new_val))
+                    _add_root('/Версия', prev[0], current_version)
+                    _add_root('/Дата', prev[1].get('date') if isinstance(prev, tuple) else None, current_date)
+                    _add_root('/@xsi:noNamespaceSchemaLocation', prev[1].get('root_schema_location') if isinstance(prev, tuple) else None, schema_loc)
+
+                    # CA-level diffs by reg_number key
+                    all_keys = set(prev_snaps.keys()) | set(snapshots.keys())
+                    for key in sorted(all_keys):
+                        before = prev_snaps.get(key)
+                        after = snapshots.get(key)
+                        if before is None and after is not None:
+                            diffs.append((prev_version, current_version, 'ca', key, '/#exists', None, '1'))
+                        elif before is not None and after is None:
+                            diffs.append((prev_version, current_version, 'ca', key, '/#exists', '1', None))
+                        else:
+                            # field-level diffs
+                            for field, path in [
+                                ('name', '/УдостоверяющийЦентр/Название'),
+                                ('effective_date', '/УдостоверяющийЦентр/СтатусАккредитации/ДействуетС'),
+                                ('ca_tool', '/УдостоверяющийЦентр/СредстваУЦ'),
+                                ('ca_tool_class', '/УдостоверяющийЦентр/КлассСредствЭП'),
+                                ('cert_subject', '/УдостоверяющийЦентр/Сертификат/КомуВыдан'),
+                                ('cert_issuer', '/УдостоверяющийЦентр/Сертификат/КемВыдан'),
+                                ('cert_serial', '/УдостоверяющийЦентр/Сертификат/СерийныйНомер'),
+                                ('cert_validity', '/УдостоверяющийЦентр/Сертификат/ПериодДействия'),
+                                ('cert_fingerprint', '/УдостоверяющийЦентр/Сертификат/Отпечаток'),
+                                ('crl_number', '/УдостоверяющийЦентр/СерийныйНомерCRL'),
+                                ('issuer_key_id', '/УдостоверяющийЦентр/ИдентификаторКлючаИздателя'),
+                            ]:
+                                old_val = before.get(field) if before else None
+                                new_val = after.get(field) if after else None
+                                if old_val != new_val:
+                                    diffs.append((prev_version, current_version, 'ca', key, path, old_val, new_val))
+                            # aggregate CRL URLs
+                            old_urls = before.get('crl_urls') if before else []
+                            new_urls = after.get('crl_urls') if after else []
+                            if sorted(old_urls) != sorted(new_urls):
+                                diffs.append((prev_version, current_version, 'ca', key, '/УдостоверяющийЦентр/АдресаСписковОтзыва/Адрес/#agg', json.dumps(old_urls, ensure_ascii=False), json.dumps(new_urls, ensure_ascii=False)))
+
+                if diffs:
+                    tsl_diffs_write(prev_version, current_version, diffs)
+            except Exception as e:
+                logger.error(f"Ошибка сохранения версий/диффов TSL: {e}")
+
             return active_cas, all_crl_urls, url_to_ca_map
         except ET.ParseError as e:
             logger.error(f"Ошибка парсинга XML TSL: {e}")
