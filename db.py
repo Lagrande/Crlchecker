@@ -114,14 +114,38 @@ def init_db():
                 from_version TEXT,
                 to_version TEXT,
                 entity_type TEXT,
-                entity_id TEXT,
+                entity_key TEXT,
                 path TEXT,
                 old_value TEXT,
                 new_value TEXT,
-                PRIMARY KEY (to_version, entity_type, entity_id, path)
+                PRIMARY KEY (to_version, entity_type, entity_key, path)
             )
             """
         )
+        
+        # Миграция: пересоздать tsl_diffs если есть старая схема
+        try:
+            cursor = conn.execute("PRAGMA table_info(tsl_diffs);")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'entity_id' in columns and 'entity_key' not in columns:
+                conn.execute("DROP TABLE IF EXISTS tsl_diffs;")
+                conn.execute(
+                    """
+                    CREATE TABLE tsl_diffs (
+                        from_version TEXT,
+                        to_version TEXT,
+                        entity_type TEXT,
+                        entity_key TEXT,
+                        path TEXT,
+                        old_value TEXT,
+                        new_value TEXT,
+                        PRIMARY KEY (to_version, entity_type, entity_key, path)
+                    )
+                    """
+                )
+        except Exception:
+            pass
+            
         conn.commit()
 
 
@@ -343,6 +367,7 @@ def tsl_versions_upsert(version: str, date: Optional[str], root_schema_location:
             """,
             (version, date, root_schema_location, xml_sha256),
         )
+        conn.commit()
 
 def tsl_ca_snapshots_get(version: str) -> Dict[str, Dict[str, Any]]:
     with get_conn() as conn:
@@ -362,15 +387,14 @@ def tsl_ca_snapshots_write(version: str, snapshots: Dict[str, Dict[str, Any]]) -
     with get_conn() as conn:
         conn.executemany(
             """
-            INSERT INTO tsl_ca_snapshot (version, entity_key, ca_reg_number, ca_id, snapshot_json)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO tsl_ca_snapshot (version, entity_key, snapshot_json)
+            VALUES (?, ?, ?)
             ON CONFLICT(version, entity_key) DO UPDATE SET
-                snapshot_json=excluded.snapshot_json,
-                ca_reg_number=excluded.ca_reg_number,
-                ca_id=excluded.ca_id
+                snapshot_json=excluded.snapshot_json
             """,
-            [(version, k, k, None, json.dumps(v, ensure_ascii=False)) for k, v in snapshots.items()],
+            [(version, k, json.dumps(v, ensure_ascii=False)) for k, v in snapshots.items()],
         )
+        conn.commit()
 
 def tsl_diffs_write(from_version: Optional[str], to_version: str, diffs: list) -> None:
     if not diffs:
@@ -378,10 +402,11 @@ def tsl_diffs_write(from_version: Optional[str], to_version: str, diffs: list) -
     with get_conn() as conn:
         conn.executemany(
             """
-            INSERT OR REPLACE INTO tsl_diffs (from_version, to_version, entity_type, entity_id, path, old_value, new_value)
+            INSERT OR REPLACE INTO tsl_diffs (from_version, to_version, entity_type, entity_key, path, old_value, new_value)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             diffs,
         )
+        conn.commit()
 
 

@@ -14,7 +14,7 @@ services:
       - SHOW_CRL_SIZE_MB=true
       - DB_ENABLED=true
       - DB_PATH=/app/data/crlchecker.db
-      - DRY_RUN=false                    # Режим Dry-run (без отправки уведомлений в Telegram)
+      - DRY_RUN=${DRY_RUN:-false}                   # Режим Dry-run (без отправки уведомлений в Telegram)
       # Кастомные источники CRL (CDP) через запятую
       - CDP_SOURCES=${CDP_SOURCES:-}
       # Перечень реестровых номеров через запятую; пусто — без фильтра
@@ -74,7 +74,7 @@ services:
       - SHOW_CRL_SIZE_MB=true
       - DB_ENABLED=true
       - DB_PATH=/app/data/crlchecker.db
-      - DRY_RUN=false                    # Режим Dry-run (без отправки уведомлений в Telegram)
+      - DRY_RUN=${DRY_RUN:-false}                # Режим Dry-run (без отправки уведомлений в Telegram)
       # Кастомные источники CRL (CDP) через запятую
       - CDP_SOURCES=${CDP_SOURCES:-}
       # Перечень реестровых номеров через запятую; пусто — без фильтра

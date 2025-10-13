@@ -161,6 +161,21 @@ class TelegramNotifier:
     def get_current_time_msk(self):
         """Получение текущего времени в московском часовом поясе"""
         return datetime.now(MOSCOW_TZ)
+    
+    def format_crl_number(self, crl_number):
+        """Безопасное форматирование серийного номера CRL в hex"""
+        if crl_number is None:
+            return "Неизвестен"
+        try:
+            # Если это число, конвертируем в hex
+            if isinstance(crl_number, (int, float)):
+                return f"{int(crl_number):x}"
+            else:
+                # Если это строка, пытаемся конвертировать в число, затем в hex
+                return f"{int(crl_number):x}"
+        except (ValueError, TypeError):
+            # Если не удается конвертировать, используем как есть
+            return str(crl_number)
 
     def get_check_time_string(self):
         """Получение строки с временем проверки"""
@@ -199,7 +214,7 @@ class TelegramNotifier:
             return
         now_msk = self.get_current_time_msk()
         # Форматируем серийный номер CRL
-        crl_number_formatted = "Неизвестен" if crl_number is None else f"{crl_number:x}"
+        crl_number_formatted = self.format_crl_number(crl_number)
         
         message = (
             f"⚠️ <b>ВНИМАНИЕ: CRL скоро истекает</b>\n"
@@ -221,7 +236,7 @@ class TelegramNotifier:
             return
         now_msk = self.get_current_time_msk()
         # Форматируем серийный номер CRL
-        crl_number_formatted = "Неизвестен" if crl_number is None else f"{crl_number:x}"
+        crl_number_formatted = self.format_crl_number(crl_number)
         
         message = (
             f"🚨 <b>КРИТИЧНО: CRL истек</b>\n"
@@ -264,11 +279,7 @@ class TelegramNotifier:
             logger.error(f"Ошибка формирования текста категорий для {crl_name}: {e}")
         
         # Форматируем номер CRL, убирая ведущие нули
-        if crl_number is None:
-            crl_number_formatted = "Неизвестен"
-        else:
-            # Убираем ведущие нули из hex представления
-            crl_number_formatted = f"{crl_number:x}"
+        crl_number_formatted = self.format_crl_number(crl_number)
         
         message = (
             f"🆕 <b>Новая версия CRL опубликована</b>\n"
@@ -446,12 +457,7 @@ class TelegramNotifier:
         # Дополнительные поля из TSL/контекста, если переданы
         crl_number = change_info.get('crl_number')
         crl_number_formatted = "Не указано"
-        try:
-            if crl_number is not None:
-                crl_number_formatted = f"{int(crl_number):x}"
-        except Exception:
-            # Если уже строка hex или иной формат
-            crl_number_formatted = str(crl_number) if crl_number is not None else "Не указано"
+        crl_number_formatted = self.format_crl_number(crl_number)
 
         issuer_key_id = change_info.get('issuer_key_id') or change_info.get('crl_key_identifier') or 'Не указано'
 
@@ -636,11 +642,7 @@ class TelegramNotifier:
         now_msk = self.get_current_time_msk()
         url_list = "\n".join([f"• <code>{u}</code>" for u in tried_urls])
         crl_number_formatted = None
-        try:
-            if crl_number is not None:
-                crl_number_formatted = f"{int(crl_number):x}"
-        except Exception:
-            crl_number_formatted = str(crl_number) if crl_number is not None else None
+        crl_number_formatted = self.format_crl_number(crl_number)
         
         logger.warning(f"Отправка уведомления о провале скачивания CRL: crl_name={crl_name}, urls={tried_urls}, ca={ca_name}, reg={ca_reg_number}")
         message = (

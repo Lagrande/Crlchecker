@@ -502,3 +502,122 @@ docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT ca_name, COUNT(*)
 
 
 
+
+```
+
+#### 🧭 Версионирование измененя реестра АУЦ (новое)
+
+База хранит версии TSL, снимки УЦ по каждой версии и диффы между версиями.
+
+- Список версий TSL:
+```bash
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT version, date, root_schema_location FROM tsl_versions ORDER BY created_at DESC LIMIT 20;"
+```
+
+- Снимки УЦ для версии (покажем количество УЦ и пример одной записи):
+```bash
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT COUNT(*) FROM tsl_ca_snapshot WHERE version='15671';"
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "SELECT entity_key, substr(snapshot_json,1,200)||'...' FROM tsl_ca_snapshot WHERE version='15671' LIMIT 1;"
+```
+
+- Диффы между двумя версиями (корневые изменения):
+```bash
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "\
+SELECT path, old_value, new_value \
+FROM tsl_diffs \
+WHERE from_version='15670' AND to_version='15671' AND entity_type='root' \
+ORDER BY path;"
+```
+
+- Диффы по конкретному УЦ (по реестровому номеру) между версиями:
+```bash
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "\
+SELECT path, old_value, new_value \
+FROM tsl_diffs \
+WHERE from_version='15670' AND to_version='15671' AND entity_type='ca' AND entity_key='43' \
+ORDER BY path;"
+```
+
+- Изменения адресов CRL (агрегат) по всем УЦ между версиями:
+```bash
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "\
+SELECT entity_key AS ca_reg_number, old_value AS crl_urls_old, new_value AS crl_urls_new \
+FROM tsl_diffs \
+WHERE from_version='15670' AND to_version='15671' \
+  AND entity_type='ca' \
+  AND path='/УдостоверяющийЦентр/АдресаСписковОтзыва/Адрес/#agg' \
+ORDER BY ca_reg_number;"
+```
+
+- Изменения адресов CRL в JSON-формате:
+```bash
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "\
+SELECT json_object('ca_reg_number', entity_key, 'crl_urls_old', old_value, 'crl_urls_new', new_value) \
+FROM tsl_diffs \
+WHERE from_version='16176' AND to_version='15671' \
+  AND entity_type='ca' \
+  AND path='/УдостоверяющийЦентр/АдресаСписковОтзыва/Адрес/#agg' \
+ORDER BY entity_key;"
+```
+
+- Все изменения по всем УЦ между версиями (с группировкой):
+```bash
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "\
+SELECT entity_key AS ca_reg_number, COUNT(*) AS changes_count \
+FROM tsl_diffs \
+WHERE from_version='15670' AND to_version='15671' AND entity_type='ca' \
+GROUP BY ca_reg_number \
+ORDER BY changes_count DESC, ca_reg_number;"
+```
+
+#### 📊 JSON-запросы для анализа данных
+
+- Версии TSL в JSON-формате:
+```bash
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "\
+SELECT json_object('version', version, 'date', date, 'schema', root_schema_location, 'created_at', created_at) as version_info \
+FROM tsl_versions ORDER BY created_at DESC LIMIT 5;"
+```
+
+- Детальные изменения по УЦ в JSON-формате:
+```bash
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "\
+SELECT json_object('ca_reg_number', entity_key, 'changes_count', COUNT(*), 'changes', json_group_array(json_object('path', path, 'old_value', old_value, 'new_value', new_value))) as ca_changes \
+FROM tsl_diffs \
+WHERE from_version='16176' AND to_version='15671' AND entity_type='ca' \
+GROUP BY entity_key ORDER BY COUNT(*) DESC LIMIT 3;"
+```
+
+- Сводка изменений в JSON-формате:
+```bash
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "\
+SELECT json_object('from_version', from_version, 'to_version', to_version, 'total_changes', COUNT(*)) as diff_summary \
+FROM tsl_diffs \
+WHERE from_version='16176' AND to_version='15671' AND entity_type='ca' \
+GROUP BY from_version, to_version;"
+```
+
+- Топ-5 УЦ с наибольшими изменениями в JSON-формате:
+```bash
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "\
+SELECT json_object('ca_reg_number', entity_key, 'changes_count', COUNT(*)) as top_changes \
+FROM tsl_diffs \
+WHERE from_version='16176' AND to_version='15671' AND entity_type='ca' \
+GROUP BY entity_key \
+ORDER BY COUNT(*) DESC LIMIT 5;"
+```
+
+- Все изменения конкретного УЦ в JSON-формате:
+```bash
+docker exec crlchecker sqlite3 /app/data/crlchecker.db "\
+SELECT json_object('ca_reg_number', entity_key, 'path', path, 'old_value', old_value, 'new_value', new_value) as change_detail \
+FROM tsl_diffs \
+WHERE from_version='16176' AND to_version='15671' AND entity_type='ca' AND entity_key='418' \
+ORDER BY path;"
+```
+
+
+
+
+
+

@@ -326,6 +326,7 @@ class TSLMonitor:
                 current_date_node = root.find('.//Дата')
                 current_date = current_date_node.text.strip() if (current_date_node is not None and current_date_node.text) else None
                 tsl_versions_upsert(current_version, current_date, schema_loc, xml_sha256)
+                logger.info(f"TSL version persisted: version={current_version}, date={current_date}, schema={schema_loc}")
 
                 # Build CA snapshots as compact JSON per CA keyed by reg_number
                 snapshots = {}
@@ -349,12 +350,17 @@ class TSLMonitor:
                 prev = tsl_versions_get_last()
                 prev_version = None
                 prev_snaps = {}
+                logger.info(f"Previous version from DB: {prev}")
                 if prev and prev[0] != current_version:
                     prev_version = prev[0]
                     prev_snaps = tsl_ca_snapshots_get(prev_version)
+                    logger.info(f"Will compute diffs from {prev_version} to {current_version}")
+                else:
+                    logger.info(f"No diffs needed: prev={prev[0] if prev else None}, current={current_version}")
 
                 # write current snapshots
                 tsl_ca_snapshots_write(current_version, snapshots)
+                logger.info(f"TSL CA snapshots persisted: version={current_version}, count={len(snapshots)}")
 
                 diffs = []
                 if prev_version:
@@ -402,6 +408,10 @@ class TSLMonitor:
 
                 if diffs:
                     tsl_diffs_write(prev_version, current_version, diffs)
+                    logger.info(f"TSL diffs persisted: from={prev_version}, to={current_version}, count={len(diffs)}")
+                else:
+                    logger.info(f"No TSL diffs to persist: prev_version={prev_version}, current_version={current_version}")
+
             except Exception as e:
                 logger.error(f"Ошибка сохранения версий/диффов TSL: {e}")
 
